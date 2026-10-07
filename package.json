@@ -1,0 +1,12 @@
+{
+  "name": "czsc-technical",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test --test-concurrency=1 tests/*.test.mjs",
+    "check:pine": "node scripts/check-pine.mjs"
+  },
+  "devDependencies": {
+    "pinets": "0.11.0"
+  }
+}

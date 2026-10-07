@@ -1,0 +1,905 @@
+//@version=6
+indicator("缠论 · 同周期结构层", "缠论结构", overlay = true, max_lines_count = 500, max_boxes_count = 500, max_labels_count = 500, max_bars_back = 5000)
+
+// 原K严格笔→冻结端点链S1/S2/S3；几何递推不代表全部走势类型。
+string G_STRUCTURE = "结构层"
+string G_DISPLAY = "显示"
+string G_ALERT = "提醒"
+string G_ADVANCED = "高级"
+bool overlayLevels = input.bool(true, "叠加本图结构层", group = G_STRUCTURE, tooltip = "S1接确认笔，S2/S3接下层确认段的冻结端点；实际范围按原K裁切。仅本图几何结构层，非多周期或完整走势类型证明。关闭只保留S1。")
+int levelCount = input.int(3, "结构层数", minval = 1, maxval = 3, group = G_STRUCTURE)
+bool showPens = input.bool(false, "确认笔", group = G_DISPLAY, tooltip = "第77课标准K间隔与分型区间条件，不缩短笔。")
+bool showSegments = input.bool(true, "确认线段", group = G_DISPLAY)
+bool showCenters = input.bool(true, "中枢核心", group = G_DISPLAY, tooltip = "固定ZD/ZG闭交核心，含单价；时间边界只随已接纳成员延伸，离开暂存，首次完整回试不返回即冻结。GG/DD仅用于趋势判断。")
+bool showCandidate = input.bool(true, "1?/2?结构候选", group = G_DISPLAY, tooltip = "1?/2?仅结构候选，缺严格力度证据；2?含标准继承及小转大路径。3类按第20课，边界含等号。")
+bool showOpen = input.bool(false, "未完成结构虚线", group = G_DISPLAY, tooltip = "可变化，不作上层输入、分类或提醒。")
+bool showStatus = input.bool(false, "简要状态", group = G_DISPLAY)
+int barBudget = input.int(18000, "已确认原K预算", minval = 500, maxval = 60000, group = G_ADVANCED, tooltip = "耗尽停止全链并保留确认状态，显示原因；不滚动裁剪。左侧结构未知。")
+int stateBudget = input.int(6000, "每类结构对象预算", minval = 100, maxval = 15000, group = G_ADVANCED, tooltip = "各类计算对象和特征重放分别限额；绘图淘汰不影响计算。")
+bool alertPoints = input.bool(true, "确认买卖事件", group = G_ALERT)
+bool alertCenters = input.bool(true, "收盘进出既有中枢", group = G_ALERT)
+bool alertCandidates = input.bool(false, "候选提醒", group = G_ALERT, tooltip = "默认关闭1?/2?提醒。")
+bool alertConfluence = input.bool(true, "同方向结构层合取", group = G_ALERT, tooltip = "同类别×方向×候选状态的不同S层，仅关联几何证据。收盘新事件统一合取；重复或过期不重触发。")
+int minConfluenceLevels = input.int(2, "合取最少层数", minval = 2, maxval = 3, group = G_ALERT)
+int confluenceBars = input.int(20, "确认间隔窗口（本图K）", minval = 1, maxval = 10000, group = G_ALERT)
+string directionFilter = input.string("全部", "方向过滤", options = ["全部", "只买", "只卖"], group = G_ALERT)
+string classFilter = input.string("全部", "类别过滤", options = ["全部", "3", "1?", "2?"], group = G_ALERT)
+int alertLevel = input.int(0, "提醒层（0=所有显示层）", minval = 0, maxval = 3, group = G_ALERT)
+int activeLevels = overlayLevels ? levelCount : 1
+int DRAW_LINES = 360
+int DRAW_BOXES = 180
+int DRAW_LABELS = 240
+
+type RawBar
+    int t
+    float h
+    float l
+
+type K
+    float h
+    float l
+    int ht
+    int lt
+
+type Point
+    int kind
+    float price
+    float h
+    int t
+    int kIndex
+
+type Leg
+    int dir
+    float a
+    float b
+    int at
+    int bt
+    int first
+    int last
+    int confirmed
+    float h
+    float l
+    int ht
+    int lt
+
+type Feature
+    float h
+    float l
+    int hi
+    int li
+    int ht
+    int lt
+
+type Center
+    float zd
+    float zg
+    float gg
+    float dd
+    int finish
+    int at
+    int bt
+    int formed
+    bool broken
+    box drawing
+    int dir
+
+type Signal
+    int level
+    int category
+    int dir
+    bool candidate
+    int occurred
+    int confirmed
+    int confirmedBar
+    float price
+
+type Level
+    array<Leg> parts
+    array<Center> centers
+    Center active
+    int searchStart
+    int departure
+    int departureDir
+    int trend
+    string phase
+    Signal buy1
+    Signal sell1
+    float trendExtreme
+    Signal smallBuy
+    Signal smallSell
+    int smallBuyStage
+    int smallSellStage
+    Signal lastBuy2
+    Signal lastSell2
+
+type SegmentBuilder
+    int start
+    int next
+    int dir
+    array<Feature> main
+    array<Feature> reverse
+    int proposed
+    int reverseNext
+    int rejected
+    int strong
+    float anchorPrice
+    int anchorTime
+    float proposedPrice
+    int proposedTime
+
+type Frame
+    int id
+    color ink
+    SegmentBuilder builder
+    Level structure
+    int inputSeen
+    line openSegment
+
+type Root
+    array<RawBar> raw
+    array<K> initial
+    array<K> candles
+    int inclusionDir
+    Point origin
+    Point endpoint
+    array<Leg> pens
+    array<Frame> frames
+    int lastTime
+    float rootLastClose
+    bool halted
+    string reason
+    line openPen
+
+var array<line> lineQueue = array.new<line>()
+var array<Center> boxQueue = array.new<Center>()
+var array<label> labelQueue = array.new<label>()
+var array<Signal> fresh = array.new<Signal>()
+
+f_level() =>
+    Level.new(array.new<Leg>(), array.new<Center>(), na, 0, -1, 0, 0, "等待确认单位", na, na, na, na, na, 0, 0, na, na)
+
+f_frame(int id) =>
+    color ink = id == 1 ? color.rgb(40, 150, 240) : id == 2 ? color.rgb(235, 135, 35) : color.rgb(175, 85, 215)
+    SegmentBuilder builder = SegmentBuilder.new(0, 0, 0, array.new<Feature>(), array.new<Feature>(), -1, 0, -1, -1, na, na, na, na)
+    Frame.new(id, ink, builder, f_level(), 0, na)
+
+f_root() =>
+    array<Frame> frames = array.new<Frame>()
+    for id = 1 to activeLevels
+        array.push(frames, f_frame(id))
+    Root.new(array.new<RawBar>(), array.new<K>(), array.new<K>(), 0, na, na, array.new<Leg>(), frames, na, na, false, "", na)
+
+f_stop(Root e, string why) =>
+    e.halted := true
+    e.reason := why
+    if not na(e.openPen)
+        line.delete(e.openPen)
+        e.openPen := na
+    for j = 0 to array.size(e.frames) - 1
+        Frame frame = array.get(e.frames, j)
+        if not na(frame.openSegment)
+            line.delete(frame.openSegment)
+            frame.openSegment := na
+    e.halted
+
+f_room(Root e, int count, string kind) =>
+    bool ok = not e.halted and count < stateBudget
+    if not ok and not e.halted
+        f_stop(e, kind + "预算耗尽；保留已确认状态，停止全链，未静默截断")
+    ok
+
+f_contains(float ah, float al, float bh, float bl) =>
+    (ah >= bh and al <= bl) or (ah <= bh and al >= bl)
+
+f_line(int at, float a, int bt, float b, color ink, int width) =>
+    line id = line.new(at, a, bt, b, xloc = xloc.bar_time, color = ink, width = width)
+    array.push(lineQueue, id)
+    if array.size(lineQueue) > DRAW_LINES
+        line.delete(array.shift(lineQueue))
+
+f_centerDrawing(Frame frame, Center c) =>
+    if showCenters
+        c.drawing := box.new(c.at, c.zg, c.bt, c.zd, xloc = xloc.bar_time, extend = extend.none, border_color = color.new(frame.ink, 35), bgcolor = color.new(frame.ink, 94), text = "S" + str.tostring(frame.id), text_color = frame.ink, text_size = size.tiny)
+        array.push(boxQueue, c)
+        if array.size(boxQueue) > DRAW_BOXES
+            Center old = array.shift(boxQueue)
+            box.delete(old.drawing)
+            old.drawing := na
+
+f_acceptMember(Center c, Leg p, int index) =>
+    c.finish := index
+    c.bt := p.bt
+    if p.dir == c.dir
+        c.gg := math.max(c.gg, p.h)
+        c.dd := math.min(c.dd, p.l)
+    if not na(c.drawing)
+        box.set_right(c.drawing, c.bt)
+    c.bt
+
+f_time(int t) =>
+    str.format_time(t, "yyyy-MM-dd HH:mm:ss", syminfo.timezone)
+
+f_emit(Frame frame, int category, int dir, bool candidate, int occurred, int confirmed, float price, string note) =>
+    Level lv = frame.structure
+    Signal prior = category == 2 ? (dir > 0 ? lv.lastBuy2 : lv.lastSell2) : na
+    bool duplicate = not na(prior) and prior.occurred == occurred
+    Signal s = duplicate ? prior : Signal.new(frame.id, category, dir, candidate, occurred, confirmed, bar_index, price)
+    if not duplicate
+        array.push(fresh, s)
+        if category > 0 and (not candidate or showCandidate)
+            string caption = timeframe.period + "·S" + str.tostring(frame.id) + "·" + str.tostring(category) + (candidate ? "?" : "") + (dir > 0 ? "买" : "卖")
+            string tip = "发生：" + f_time(occurred) + "\n确认：" + f_time(confirmed) + "\n观察：" + f_time(time_close) + "\n发生价：" + str.tostring(price, format.mintick) + "\n历史极点位置不等于当时已知；确认后标签不搬移。\n" + note
+            label id = label.new(occurred, price, caption, xloc = xloc.bar_time, yloc = yloc.price, style = dir > 0 ? label.style_arrowup : label.style_arrowdown, color = color.new(frame.ink, candidate ? 55 : 15), textcolor = frame.ink, size = size.tiny, tooltip = tip)
+            array.push(labelQueue, id)
+            if array.size(labelQueue) > DRAW_LABELS
+                label.delete(array.shift(labelQueue))
+        if category == 2
+            if dir > 0
+                lv.lastBuy2 := s
+            else
+                lv.lastSell2 := s
+    s
+
+// 原K闭区间裁切；包含K或缓存极值可能跨界，不能替代。
+f_rawIndex(Root e, int t) =>
+    int lo = 0
+    int hi = array.size(e.raw)
+    while lo < hi
+        int mid = int(math.floor((lo + hi) / 2))
+        RawBar k = array.get(e.raw, mid)
+        if k.t < t
+            lo := mid + 1
+        else
+            hi := mid
+    lo
+
+f_range(Root e, int at, float a, int bt, float b) =>
+    float h = math.max(a, b)
+    float l = math.min(a, b)
+    int ht = a >= b ? at : bt
+    int lt = a <= b ? at : bt
+    int j = f_rawIndex(e, at)
+    int n = array.size(e.raw)
+    int endIndex = f_rawIndex(e, bt)
+    bool mapped = j < n and endIndex < n
+    if mapped
+        mapped := array.get(e.raw, j).t == at and array.get(e.raw, endIndex).t == bt and at <= bt
+    if not mapped
+        f_stop(e, "本图原K时界映射错误：结构锚不在已确认原K序列")
+        h := na
+        l := na
+        ht := na
+        lt := na
+    while mapped and j <= endIndex
+        RawBar k = array.get(e.raw, j)
+        if k.h > h
+            h := k.h
+            ht := k.t
+        if k.l < l
+            l := k.l
+            lt := k.t
+        j += 1
+    [h, l, ht, lt]
+
+f_leg(Root e, Point a, Point b, int confirmed) =>
+    [h, l, ht, lt] = f_range(e, a.t, a.price, b.t, b.price)
+    Leg.new(b.price > a.price ? 1 : -1, a.price, b.price, a.t, b.t, a.kIndex, b.kIndex, confirmed, h, l, ht, lt)
+
+f_featurePush(array<Feature> seq, Feature item, int dir) =>
+    bool appended = true
+    int n = array.size(seq)
+    if n > 0
+        Feature prev = array.get(seq, n - 1)
+        if f_contains(prev.h, prev.l, item.h, item.l)
+            appended := false
+            int mergeDir = dir
+            if n >= 2
+                Feature before = array.get(seq, n - 2)
+                mergeDir := prev.h > before.h ? 1 : -1
+            float h = mergeDir > 0 ? math.max(prev.h, item.h) : math.min(prev.h, item.h)
+            float l = mergeDir > 0 ? math.max(prev.l, item.l) : math.min(prev.l, item.l)
+            if h != prev.h
+                prev.hi := item.hi
+                prev.ht := item.ht
+            if l != prev.l
+                prev.li := item.li
+                prev.lt := item.lt
+            prev.h := h
+            prev.l := l
+    if appended
+        array.push(seq, item)
+    appended
+
+// 特征用冻结端点，不以原K内部极值改写节点时序。
+f_feature(Leg p, int index) =>
+    Feature.new(math.max(p.a, p.b), math.min(p.a, p.b), p.dir > 0 ? index + 1 : index, p.dir > 0 ? index : index + 1, p.dir > 0 ? p.bt : p.at, p.dir > 0 ? p.at : p.bt)
+
+f_featureFractal(array<Feature> seq, int dir) =>
+    int endpoint = -1
+    bool gap = false
+    float price = na
+    int pivotTime = na
+    int n = array.size(seq)
+    // 最新元素仍可被包含；只判断已冻结的右元素。
+    if n >= 4
+        Feature a = array.get(seq, n - 4)
+        Feature b = array.get(seq, n - 3)
+        Feature c = array.get(seq, n - 2)
+        bool fractal = dir > 0 ? b.h > a.h and b.h > c.h and b.l > a.l and b.l > c.l : b.h < a.h and b.h < c.h and b.l < a.l and b.l < c.l
+        if fractal
+            endpoint := dir > 0 ? b.hi : b.li
+            gap := dir > 0 ? a.h < b.l : a.l > b.h
+            price := dir > 0 ? b.h : b.l
+            pivotTime := dir > 0 ? b.ht : b.lt
+    [endpoint, gap, price, pivotTime]
+
+f_refreshTrend(Level lv) =>
+    int n = array.size(lv.centers)
+    int direction = 0
+    if n >= 2
+        Center recent = array.get(lv.centers, n - 1)
+        Center previous = array.get(lv.centers, n - 2)
+        direction := previous.gg < recent.dd ? 1 : previous.dd > recent.gg ? -1 : 0
+    lv.trend := direction
+
+f_followCandidate(Frame frame, int confirmed) =>
+    Level lv = frame.structure
+    for side = 0 to 1
+        Signal parent = side == 0 ? lv.buy1 : lv.sell1
+        if not na(parent)
+            int stage = 0
+            int n = array.size(lv.parts)
+            if n > 0
+                for j = 0 to n - 1
+                    Leg q = array.get(lv.parts, j)
+                    if q.bt > parent.occurred
+                        if stage == 0 and q.dir == parent.dir
+                            stage := 1
+                        else if stage == 1 and q.dir == -parent.dir
+                            f_emit(frame, 2, parent.dir, true, parent.dir > 0 ? q.lt : q.ht, confirmed, parent.dir > 0 ? q.l : q.h, "标准1?→2?路径：完整反向反弹/回落后首次完整回试结束；继承父候选不确定性，第101课不要求不破1买/1卖。仅结构候选。")
+                            if side == 0
+                                lv.buy1 := na
+                            else
+                                lv.sell1 := na
+                            break
+    0
+
+f_levelPart(Root e, Frame frame, Leg p, int confirmed) =>
+    Level lv = frame.structure
+    bool accepted = f_room(e, array.size(lv.parts), "S" + str.tostring(frame.id) + "确认段")
+    if accepted
+        int oldTrend = lv.trend
+        float oldExtreme = lv.trendExtreme
+        array.push(lv.parts, p)
+        int n = array.size(lv.parts)
+        int index = n - 1
+        f_followCandidate(frame, confirmed)
+        if not na(lv.active)
+            Center c = lv.active
+            if lv.departure >= 0
+                Leg leave = array.get(lv.parts, lv.departure)
+                if p.dir == -lv.departureDir
+                    bool away = lv.departureDir > 0 ? p.l >= c.zg : p.h <= c.zd
+                    if away
+                        f_emit(frame, 3, lv.departureDir, false, lv.departureDir > 0 ? p.lt : p.ht, confirmed, lv.departureDir > 0 ? p.l : p.h, "完整确认段离开后，首次完整反向段实际全区间不返回固定[ZD,ZG]；第20课包含等号。只确认本层中枢破坏，不证明完整走势类型终点。")
+                        c.broken := true
+                        lv.searchStart := lv.departure + 1
+                        lv.active := na
+                        lv.departure := -1
+                        lv.departureDir := 0
+                        lv.phase := "中枢破坏；完整走势未证完成"
+                    else
+                        f_acceptMember(c, leave, lv.departure)
+                        f_acceptMember(c, p, index)
+                        lv.departure := -1
+                        lv.departureDir := 0
+                        lv.phase := "中枢延伸"
+            else
+                int exitDir = p.dir > 0 and p.h > c.zg ? 1 : p.dir < 0 and p.l < c.zd ? -1 : 0
+                if exitDir != 0
+                    lv.departure := index
+                    lv.departureDir := exitDir
+                    lv.phase := "离开暂存，等待首次完整回试"
+                else
+                    f_acceptMember(c, p, index)
+                    lv.phase := "中枢延伸"
+        if na(lv.active) and n >= 3 and index - 2 >= lv.searchStart and not e.halted
+            Leg a = array.get(lv.parts, index - 2)
+            Leg b = array.get(lv.parts, index - 1)
+            float zd = math.max(a.l, math.max(b.l, p.l))
+            float zg = math.min(a.h, math.min(b.h, p.h))
+            if zd <= zg and a.dir == p.dir and a.dir == -b.dir and f_room(e, array.size(lv.centers), "S" + str.tostring(frame.id) + "中枢")
+                // 初三闭交固定核心；GG/DD只收同向Z段及接纳的同向延伸。
+                Center c = Center.new(zd, zg, math.max(a.h, p.h), math.min(a.l, p.l), index, a.at, p.bt, confirmed, false, na, a.dir)
+                array.push(lv.centers, c)
+                lv.active := c
+                lv.departure := -1
+                lv.departureDir := 0
+                f_centerDrawing(frame, c)
+                lv.phase := "中枢形成；完整走势未证完成"
+        f_refreshTrend(lv)
+        if lv.trend != oldTrend
+            oldExtreme := na
+        int count = array.size(lv.centers)
+        if lv.trend != 0
+            Center lastCenter = array.get(lv.centers, count - 1)
+            bool outside = index > lastCenter.finish and (lv.trend > 0 ? p.h > lastCenter.zg : p.l < lastCenter.zd)
+            bool newExtreme = not na(oldExtreme) and (p.dir > 0 ? p.h > oldExtreme : p.l < oldExtreme)
+            if outside and newExtreme and p.dir == lv.trend
+                int side = -p.dir
+                Signal premise = f_emit(frame, 1, side, true, side > 0 ? p.lt : p.ht, confirmed, side > 0 ? p.l : p.h, "至少两个同级GG/DD独立同向中枢；末中枢后完整段创新极值，极点已由反向特征序列确认。只证背驰形态前提，不证力度，不是严格1类。\n仅纯结构候选，未获得严格力度证据。")
+                if side > 0
+                    lv.buy1 := premise
+                    lv.smallBuy := premise
+                    lv.smallBuyStage := 0
+                else
+                    lv.sell1 := premise
+                    lv.smallSell := premise
+                    lv.smallSellStage := 0
+        if lv.trend != 0
+            float rangeExtreme = lv.trend > 0 ? p.h : p.l
+            lv.trendExtreme := na(oldExtreme) ? rangeExtreme : lv.trend > 0 ? math.max(oldExtreme, rangeExtreme) : math.min(oldExtreme, rangeExtreme)
+        else
+            lv.trendExtreme := na
+        for side = 0 to 1
+            Signal anchor = side == 0 ? lv.smallBuy : lv.smallSell
+            int stage = side == 0 ? lv.smallBuyStage : lv.smallSellStage
+            if not na(anchor) and p.bt > anchor.occurred
+                if stage == 0 and p.dir == anchor.dir
+                    stage := 1
+                else if stage == 1 and p.dir == -anchor.dir
+                    bool holds = anchor.dir > 0 ? p.l >= anchor.price : p.h <= anchor.price
+                    if holds
+                        f_emit(frame, 2, anchor.dir, true, anchor.dir > 0 ? p.lt : p.ht, confirmed, anchor.dir > 0 ? p.l : p.h, "第53课小转大独立2?路径：完整同级趋势极点后，完整反向段+完整原向回试不创新极值。没有强制1?父事件；仅结构，不证明真实小转大。")
+                    if side == 0
+                        lv.smallBuy := na
+                    else
+                        lv.smallSell := na
+                    stage := 0
+                if side == 0
+                    lv.smallBuyStage := stage
+                else
+                    lv.smallSellStage := stage
+        if lv.trend != 0 and not na(lv.active)
+            lv.phase := "同级趋势；完整走势未证完成"
+        else if count > 1 and lv.trend == 0 and not na(lv.active)
+            lv.phase := "延伸/扩张或波动重叠"
+    accepted
+
+// 局部分型须满足至少三单位、时价同向，才是段终点。
+f_endpointValid(SegmentBuilder s, int endpoint, float price, int pivotTime) =>
+    endpoint - s.start >= 3 and pivotTime > s.anchorTime and (s.dir > 0 ? price > s.anchorPrice : price < s.anchorPrice)
+
+f_segmentConfirm(Root e, Frame frame, array<Leg> lower, int endpoint, float pivotPrice, int pivotTime, int confirmed) =>
+    SegmentBuilder s = frame.builder
+    bool valid = f_endpointValid(s, endpoint, pivotPrice, pivotTime)
+    bool reset = false
+    if valid
+        if array.size(lower) - endpoint < 3
+            f_stop(e, "S" + str.tostring(frame.id) + "终结证据不足：后继尚无三个确认单位")
+        else
+            Leg nextFirst = array.get(lower, endpoint)
+            Leg nextSecond = array.get(lower, endpoint + 1)
+            Leg nextThird = array.get(lower, endpoint + 2)
+            float lo = math.max(math.min(nextFirst.a, nextFirst.b), math.max(math.min(nextSecond.a, nextSecond.b), math.min(nextThird.a, nextThird.b)))
+            float hi = math.min(math.max(nextFirst.a, nextFirst.b), math.min(math.max(nextSecond.a, nextSecond.b), math.max(nextThird.a, nextThird.b)))
+            bool shared = nextFirst.a == pivotPrice and nextFirst.at == pivotTime
+            bool connected = nextSecond.a == nextFirst.b and nextSecond.at == nextFirst.bt and nextThird.a == nextSecond.b and nextThird.at == nextSecond.bt
+            if not shared or not connected or lo > hi or nextFirst.dir != -s.dir or nextThird.dir != nextFirst.dir or nextSecond.dir != -nextFirst.dir
+                f_stop(e, "S" + str.tostring(frame.id) + "共享端点后继链/三单位重叠错误；禁止移动冻结锚")
+    if valid and f_room(e, array.size(frame.structure.parts), "S" + str.tostring(frame.id) + "确认段")
+        [h, l, ht, lt] = f_range(e, s.anchorTime, s.anchorPrice, pivotTime, pivotPrice)
+        Leg segment = Leg.new(s.dir, s.anchorPrice, pivotPrice, s.anchorTime, pivotTime, s.start, endpoint, confirmed, h, l, ht, lt)
+        bool accepted = f_levelPart(e, frame, segment, confirmed)
+        if accepted
+            if showSegments
+                f_line(segment.at, segment.a, segment.bt, segment.b, frame.ink, frame.id + 1)
+            s.start := endpoint
+            s.anchorPrice := pivotPrice
+            s.anchorTime := pivotTime
+            reset := true
+    else if not valid and array.size(frame.structure.parts) == 0
+        // 左侧未知：只重选未公开起点，以下一真实单位重放。
+        s.start += 1
+        s.anchorPrice := na
+        s.anchorTime := na
+        reset := true
+    else if not valid
+        f_stop(e, "S" + str.tostring(frame.id) + "确认端点映射错误：需三个下层单位、递增时间与同向价序")
+    if reset
+        s.next := s.start
+        s.dir := 0
+        s.proposed := -1
+        s.reverseNext := s.start
+        s.rejected := -1
+        s.strong := -1
+        s.proposedPrice := na
+        s.proposedTime := na
+        array.clear(s.main)
+        array.clear(s.reverse)
+    valid
+
+f_segments(Root e, Frame frame, array<Leg> lower, int confirmed) =>
+    SegmentBuilder s = frame.builder
+    int n = array.size(lower)
+    bool scanning = true
+    int steps = 0
+    while scanning and not e.halted
+        steps += 1
+        if steps > stateBudget * 4
+            f_stop(e, "S" + str.tostring(frame.id) + "特征重放预算耗尽；停止全链")
+            scanning := false
+        else if s.dir == 0
+            if n - s.start >= 3
+                Leg a = array.get(lower, s.start)
+                if array.size(frame.structure.parts) == 0
+                    // 仅未知左界可重选未发布节点；各层一致。
+                    s.anchorPrice := a.a
+                    s.anchorTime := a.at
+                Leg b = array.get(lower, s.start + 1)
+                Leg c = array.get(lower, s.start + 2)
+                float lo = math.max(math.min(a.a, a.b), math.max(math.min(b.a, b.b), math.min(c.a, c.b)))
+                float hi = math.min(math.max(a.a, a.b), math.min(math.max(b.a, b.b), math.max(c.a, c.b)))
+                if lo <= hi and a.dir == c.dir and a.dir == -b.dir
+                    s.dir := a.dir
+                    s.next := s.start
+                else if array.size(frame.structure.parts) == 0
+                    s.start += 1
+                    s.next := s.start
+                    s.anchorPrice := na
+                    s.anchorTime := na
+                else
+                    f_stop(e, "S" + str.tostring(frame.id) + "共享端点后三单位不闭交；禁止跳过已冻结锚")
+            else
+                scanning := false
+        else if s.proposed >= 0
+            if s.reverseNext < n
+                int j = s.reverseNext
+                Leg p = array.get(lower, j)
+                s.reverseNext += 1
+                bool resumes = p.dir == s.dir and (s.dir > 0 ? p.b > s.proposedPrice : p.b < s.proposedPrice)
+                if resumes
+                    // 78：第二序列未完又创新极值，A+B+C仍为一段；取消旧端点。
+                    s.rejected := math.max(s.rejected, s.proposed)
+                    s.proposed := -1
+                    s.proposedPrice := na
+                    s.proposedTime := na
+                    s.strong := -1
+                    s.next := s.start
+                    array.clear(s.main)
+                    array.clear(s.reverse)
+                else
+                    bool strongComplete = false
+                    if s.strong >= 0 and j >= s.strong + 2
+                        Leg a = array.get(lower, s.strong)
+                        Leg b = array.get(lower, s.strong + 1)
+                        Leg c = array.get(lower, s.strong + 2)
+                        float lo = math.max(math.min(a.a, a.b), math.max(math.min(b.a, b.b), math.min(c.a, c.b)))
+                        float hi = math.min(math.max(a.a, a.b), math.min(math.max(b.a, b.b), math.max(c.a, c.b)))
+                        strongComplete := lo <= hi and a.dir == c.dir and a.dir == -b.dir and p.dir == a.dir and (s.dir > 0 ? p.b < a.b : p.b > a.b)
+                    if strongComplete
+                        f_segmentConfirm(e, frame, lower, s.proposed, s.proposedPrice, s.proposedTime, confirmed)
+                    else if s.strong < 0 and p.dir == s.dir and f_room(e, array.size(s.reverse), "S" + str.tostring(frame.id) + "反向特征序列")
+                        bool appended = f_featurePush(s.reverse, f_feature(p, j), -s.dir)
+                        if appended
+                            [endpoint, ignoredGap, ignoredPrice, ignoredTime] = f_featureFractal(s.reverse, -s.dir)
+                            if endpoint >= 0
+                                f_segmentConfirm(e, frame, lower, s.proposed, s.proposedPrice, s.proposedTime, confirmed)
+            else
+                scanning := false
+        else if s.next < n
+            int j = s.next
+            Leg p = array.get(lower, j)
+            s.next += 1
+            if p.dir == -s.dir and f_room(e, array.size(s.main), "S" + str.tostring(frame.id) + "主特征序列")
+                Feature item = f_feature(p, j)
+                int count = array.size(s.main)
+                bool firstDestruction = false
+                if count > 0 and j > s.rejected and j - s.start >= 3
+                    Feature previous = array.get(s.main, count - 1)
+                    firstDestruction := s.dir > 0 ? item.h >= previous.h and item.l < previous.l : item.l <= previous.l and item.h > previous.h
+                    if firstDestruction and array.size(frame.structure.parts) > 0 and not f_endpointValid(s, j, s.dir > 0 ? item.h : item.l, s.dir > 0 ? item.ht : item.lt)
+                        // 非合法分界仍进入包含处理，不跳下层单位。
+                        firstDestruction := false
+                        frame.structure.phase := "等待时价同向的完整段终结；局部分型不足"
+                if firstDestruction
+                    // 71：第一破坏笔跨假定分界，不能与界前末特征元素做包含。
+                    s.proposed := j
+                    s.proposedPrice := s.dir > 0 ? item.h : item.l
+                    s.proposedTime := s.dir > 0 ? item.ht : item.lt
+                    s.strong := j
+                    s.reverseNext := j
+                    array.clear(s.reverse)
+                else
+                    bool appended = f_featurePush(s.main, item, s.dir)
+                    if appended
+                        [endpoint, gap, pivotPrice, pivotTime] = f_featureFractal(s.main, s.dir)
+                        if endpoint >= s.start + 3 and endpoint > s.rejected
+                            bool eligible = array.size(frame.structure.parts) == 0 or f_endpointValid(s, endpoint, pivotPrice, pivotTime)
+                            if not eligible
+                                frame.structure.phase := "等待时价同向的完整段终结；局部分型不足"
+                            else if gap
+                                s.proposed := endpoint
+                                s.proposedPrice := pivotPrice
+                                s.proposedTime := pivotTime
+                                s.strong := -1
+                                s.reverseNext := endpoint
+                                array.clear(s.reverse)
+                            else
+                                f_segmentConfirm(e, frame, lower, endpoint, pivotPrice, pivotTime, confirmed)
+        else
+            scanning := false
+        0
+    0
+
+f_pivot(Root e, Point point, int confirmed) =>
+    if na(e.origin)
+        e.origin := point
+    else
+        bool hasEndpoint = not na(e.endpoint)
+        Point prior = hasEndpoint ? e.endpoint : e.origin
+        if point.kind == prior.kind
+            bool extreme = point.kind > 0 ? point.price > prior.price : point.price < prior.price
+            if extreme
+                if hasEndpoint
+                    e.endpoint := point
+                else
+                    e.origin := point
+        else
+            bool spacing = point.kIndex - prior.kIndex >= 4
+            bool priceOrder = point.kind > 0 ? point.price > prior.price : point.price < prior.price
+            bool interval77 = point.kind > 0 ? point.h > prior.h : prior.h > point.h
+            if spacing and priceOrder and interval77
+                if not hasEndpoint
+                    e.endpoint := point
+                else if f_room(e, array.size(e.pens), "确认笔")
+                    Leg p = f_leg(e, e.origin, e.endpoint, confirmed)
+                    if not e.halted
+                        array.push(e.pens, p)
+                        if showPens
+                            f_line(p.at, p.a, p.bt, p.b, color.new(color.rgb(40, 150, 240), 65), 1)
+                        e.origin := e.endpoint
+                        e.endpoint := point
+    e.endpoint
+
+f_fractal(Root e, int confirmed) =>
+    int n = array.size(e.candles)
+    if n >= 4
+        K a = array.get(e.candles, n - 4)
+        K b = array.get(e.candles, n - 3)
+        K c = array.get(e.candles, n - 2)
+        bool top = b.h > a.h and b.h > c.h and b.l > a.l and b.l > c.l
+        bool bottom = b.h < a.h and b.h < c.h and b.l < a.l and b.l < c.l
+        if top or bottom
+            Point p = Point.new(top ? 1 : -1, top ? b.h : b.l, b.h, top ? b.ht : b.lt, n - 3)
+            f_pivot(e, p, confirmed)
+
+f_normalized(Root e, K item, int confirmed) =>
+    int n = array.size(e.candles)
+    if n == 0
+        array.push(e.candles, item)
+    else
+        K last = array.get(e.candles, n - 1)
+        if f_contains(last.h, last.l, item.h, item.l)
+            float h = e.inclusionDir > 0 ? math.max(last.h, item.h) : math.min(last.h, item.h)
+            float l = e.inclusionDir > 0 ? math.max(last.l, item.l) : math.min(last.l, item.l)
+            if h != last.h
+                last.ht := item.ht
+            if l != last.l
+                last.lt := item.lt
+            last.h := h
+            last.l := l
+        else
+            e.inclusionDir := item.h > last.h ? 1 : -1
+            if f_room(e, n, "标准化K线")
+                array.push(e.candles, item)
+                f_fractal(e, confirmed)
+    e.inclusionDir
+
+f_closeEvents(Frame frame, float priorClose, float closePrice, int occurred, int confirmed) =>
+    Center c = frame.structure.active
+    if not na(priorClose) and not na(c) and c.formed < confirmed
+        bool before = priorClose >= c.zd and priorClose <= c.zg
+        bool inside = closePrice >= c.zd and closePrice <= c.zg
+        if before != inside
+            int side = closePrice > c.zg ? 1 : closePrice < c.zd ? -1 : 0
+            f_emit(frame, inside ? 0 : -1, side, false, occurred, confirmed, closePrice, inside ? "本图确认收盘进入既有中枢" : "本图确认收盘离开既有中枢；上/下离开不是买卖点。")
+    0
+
+f_ingest(Root e, int t, int tc, float h, float l) =>
+    if not e.halted and not na(t) and (na(e.lastTime) or t > e.lastTime)
+        if array.size(e.raw) >= barBudget
+            f_stop(e, "本图已确认原K预算耗尽；停止全链，保留既有确认状态")
+        else
+            e.lastTime := t
+            array.push(e.raw, RawBar.new(t, h, l))
+            K item = K.new(h, l, t, t)
+            if e.inclusionDir == 0
+                int n = array.size(e.initial)
+                if n > 0
+                    K prior = array.get(e.initial, n - 1)
+                    if not f_contains(prior.h, prior.l, h, l)
+                        e.inclusionDir := h > prior.h ? 1 : -1
+                if f_room(e, n, "初始无方向K线缓冲")
+                    array.push(e.initial, item)
+                if e.inclusionDir != 0
+                    for j = 0 to array.size(e.initial) - 1
+                        if not e.halted
+                            f_normalized(e, array.get(e.initial, j), tc)
+                    array.clear(e.initial)
+            else
+                f_normalized(e, item, tc)
+    0
+
+f_consume(Root e, int t, int tc, float h, float l, float c) =>
+    if not e.halted and not na(t) and (na(e.lastTime) or t > e.lastTime)
+        if array.size(e.raw) >= barBudget
+            f_stop(e, "本图已确认原K预算耗尽；停止全链，保留既有确认状态")
+        else
+            float priorClose = e.rootLastClose
+            for j = 0 to activeLevels - 1
+                f_closeEvents(array.get(e.frames, j), priorClose, c, t, tc)
+            e.rootLastClose := c
+            f_ingest(e, t, tc, h, l)
+            // 上层只接下层确认单位；候选/虚线不入链。
+            for j = 0 to 2
+                if j < activeLevels and not e.halted
+                    Frame frame = array.get(e.frames, j)
+                    array<Leg> lower = j == 0 ? e.pens : array.get(e.frames, j - 1).structure.parts
+                    int n = array.size(lower)
+                    if n > frame.inputSeen
+                        f_segments(e, frame, lower, tc)
+                        frame.inputSeen := n
+    0
+
+f_pending(Root e, int currentTime, float currentPrice) =>
+    if showOpen and not e.halted
+        if not na(e.origin)
+            Point end = e.endpoint
+            float price = na(end) ? currentPrice : end.price
+            int t = na(end) ? currentTime : end.t
+            if na(e.openPen)
+                e.openPen := line.new(e.origin.t, e.origin.price, t, price, xloc = xloc.bar_time, style = line.style_dashed, color = color.new(color.rgb(40, 150, 240), 70))
+            else
+                line.set_xy1(e.openPen, e.origin.t, e.origin.price)
+                line.set_xy2(e.openPen, t, price)
+        for j = 0 to activeLevels - 1
+            Frame frame = array.get(e.frames, j)
+            SegmentBuilder s = frame.builder
+            if s.dir != 0 and not na(s.anchorTime)
+                if na(frame.openSegment)
+                    frame.openSegment := line.new(s.anchorTime, s.anchorPrice, currentTime, currentPrice, xloc = xloc.bar_time, style = line.style_dashed, color = color.new(frame.ink, 40), width = frame.id + 1)
+                else
+                    line.set_xy1(frame.openSegment, s.anchorTime, s.anchorPrice)
+                    line.set_xy2(frame.openSegment, currentTime, currentPrice)
+    0
+
+f_payload(Signal s, string kind, int count, string levels) =>
+    string category = s.category == 0 ? "center_enter" : s.category == -1 ? "center_exit" : str.tostring(s.category) + (s.candidate ? "?" : "")
+    string direction = s.category <= 0 ? (s.dir > 0 ? "outside_above" : s.dir < 0 ? "outside_below" : "inside") : (s.dir > 0 ? "buy" : "sell")
+    "{\"symbol\":\"" + syminfo.tickerid + "\",\"timeframe\":\"" + timeframe.period + "\",\"level\":" + str.tostring(s.level) + ",\"levels\":" + levels + ",\"category\":\"" + category + "\",\"direction\":\"" + direction + "\",\"candidate\":" + (s.candidate ? "true" : "false") + ",\"event_time\":" + str.tostring(s.occurred) + ",\"confirmed_time\":" + str.tostring(s.confirmed) + ",\"observed_time\":" + str.tostring(time_close) + ",\"price\":" + str.tostring(s.price, format.mintick) + ",\"level_count\":" + str.tostring(count) + ",\"kind\":\"" + kind + "\"}"
+
+f_qualified(Signal s) =>
+    string category = str.tostring(s.category) + (s.candidate ? "?" : "")
+    bool classOK = classFilter == "全部" or classFilter == category
+    bool directionOK = directionFilter == "全部" or (directionFilter == "只买" and s.dir > 0) or (directionFilter == "只卖" and s.dir < 0)
+    s.category > 0 and classOK and directionOK
+
+f_levelAllowed(int id) =>
+    id >= 1 and id <= activeLevels and (alertLevel == 0 or alertLevel == id)
+
+float chartSeconds = timeframe.in_seconds()
+if barstate.isfirst
+    if na(chartSeconds) or not chart.is_standard
+        runtime.error("仅支持有确定时间长度的标准时间K线；非时间/非标准图不可构造原著K线结构。")
+
+var Root root = f_root()
+array.clear(fresh)
+if barstate.isconfirmed
+    f_consume(root, time, time_close, high, low, close)
+
+// 类别×方向×候选分组；按本图确认bar_index计窗口。
+var array<int> confluenceTimes = array.new<int>(36, na)
+var array<int> confluenceIndexes = array.new<int>(36, na)
+var array<int> confluenceOccurrences = array.new<int>(36, na)
+var array<string> confluenceSignatures = array.new<string>(12, "")
+var array<Signal> groupLatest = array.new<Signal>(12, na)
+var array<int> groupLatestTimes = array.new<int>(12, na)
+var array<int> groupLatestOccurrences = array.new<int>(12, na)
+var array<bool> touched = array.new<bool>(12, false)
+var array<int> centerTimes = array.new<int>(6, na)
+array.fill(touched, false)
+bool strictBuy = false
+bool strictSell = false
+bool candidateBuy = false
+bool candidateSell = false
+bool entered = false
+bool exited = false
+bool confluenceBuy = false
+bool confluenceSell = false
+var array<string> messages = array.new<string>()
+array.clear(messages)
+if barstate.isconfirmed and array.size(fresh) > 0
+    // 整批新事件入缓存后才判断合取。
+    for j = 0 to array.size(fresh) - 1
+        Signal s = array.get(fresh, j)
+        bool levelOK = f_levelAllowed(s.level)
+        if s.category <= 0
+            if levelOK and alertCenters
+                int slot = (s.level - 1) * 2 + (s.category == 0 ? 0 : 1)
+                int previous = array.get(centerTimes, slot)
+                if na(previous) or s.confirmed > previous
+                    array.set(centerTimes, slot, s.confirmed)
+                    entered := entered or s.category == 0
+                    exited := exited or s.category == -1
+                    array.push(messages, f_payload(s, "center", 1, "[" + str.tostring(s.level) + "]"))
+        else if levelOK and f_qualified(s) and (not s.candidate or alertCandidates)
+            int group = (s.candidate ? 6 : 0) + (s.category - 1) * 2 + (s.dir > 0 ? 0 : 1)
+            int slot = group * 3 + s.level - 1
+            int previous = array.get(confluenceTimes, slot)
+            int previousOccurrence = array.get(confluenceOccurrences, slot)
+            bool isNew = na(previous) or s.confirmed > previous or (s.confirmed == previous and s.occurred > previousOccurrence)
+            if isNew
+                array.set(confluenceTimes, slot, s.confirmed)
+                array.set(confluenceIndexes, slot, s.confirmedBar)
+                array.set(confluenceOccurrences, slot, s.occurred)
+                array.set(touched, group, true)
+                int latestTime = array.get(groupLatestTimes, group)
+                int latestOccurrence = array.get(groupLatestOccurrences, group)
+                // scalar时间选latest，避免array<UDT>初值na判断。
+                if na(latestTime) or s.confirmed > latestTime or (s.confirmed == latestTime and s.occurred >= latestOccurrence)
+                    array.set(groupLatestTimes, group, s.confirmed)
+                    array.set(groupLatestOccurrences, group, s.occurred)
+                    array.set(groupLatest, group, s)
+                if alertPoints
+                    strictBuy := strictBuy or (not s.candidate and s.dir > 0)
+                    strictSell := strictSell or (not s.candidate and s.dir < 0)
+                    candidateBuy := candidateBuy or (s.candidate and s.dir > 0)
+                    candidateSell := candidateSell or (s.candidate and s.dir < 0)
+                    array.push(messages, f_payload(s, s.candidate ? "candidate" : "point", 1, "[" + str.tostring(s.level) + "]"))
+    if alertConfluence
+        for group = 0 to 11
+            if array.get(touched, group)
+                int count = 0
+                string signature = ""
+                string matched = ""
+                for index = 0 to 2
+                    int confirmedIndex = array.get(confluenceIndexes, group * 3 + index)
+                    int confirmedTime = array.get(confluenceTimes, group * 3 + index)
+                    int occurred = array.get(confluenceOccurrences, group * 3 + index)
+                    if f_levelAllowed(index + 1) and not na(confirmedIndex) and confirmedIndex <= bar_index and bar_index - confirmedIndex <= confluenceBars
+                        count += 1
+                        matched += (count > 1 ? "," : "") + str.tostring(index + 1)
+                        signature += str.tostring(index + 1) + ":" + str.tostring(confirmedTime) + ":" + str.tostring(occurred) + ";"
+                if count >= minConfluenceLevels and signature != array.get(confluenceSignatures, group)
+                    array.set(confluenceSignatures, group, signature)
+                    Signal s = array.get(groupLatest, group)
+                    confluenceBuy := confluenceBuy or s.dir > 0
+                    confluenceSell := confluenceSell or s.dir < 0
+                    array.push(messages, f_payload(s, s.candidate ? "candidate_confluence" : "confluence", count, "[" + matched + "]"))
+// 每次收盘一个JSON，包含全部事件。
+if barstate.isconfirmed and array.size(messages) > 0
+    alert("{\"events\":[" + array.join(messages, ",") + "]}", alert.freq_once_per_bar_close)
+
+alertcondition(strictBuy, "确认3类买点", "{{ticker}} 已确认3类买点；JSON请用 Any alert() function call。")
+alertcondition(strictSell, "确认3类卖点", "{{ticker}} 已确认3类卖点；JSON请用 Any alert() function call。")
+alertcondition(candidateBuy, "结构候选买点", "{{ticker}} 1?/2?仅结构候选，非严格买点。")
+alertcondition(candidateSell, "结构候选卖点", "{{ticker}} 1?/2?仅结构候选，非严格卖点。")
+alertcondition(entered, "确认收盘进入既有中枢", "{{ticker}} 本图确认收盘进入既有中枢。")
+alertcondition(exited, "确认收盘离开既有中枢", "{{ticker}} 本图确认收盘离开既有中枢。")
+alertcondition(confluenceBuy, "买向结构层合取", "{{ticker}} 同类别买向事件达到不同结构层合取阈值。")
+alertcondition(confluenceSell, "卖向结构层合取", "{{ticker}} 同类别卖向事件达到不同结构层合取阈值。")
+
+var table panel = table.new(position.top_right, 1, 1, bgcolor = color.new(chart.bg_color, 10))
+if barstate.islast
+    f_pending(root, time, close)
+    if root.halted
+        table.cell(panel, 0, 0, "停止：" + root.reason, text_color = color.red, text_size = size.small)
+    else if showStatus
+        string status = "本图 " + timeframe.period + " · 原K " + str.tostring(array.size(root.raw)) + "/" + str.tostring(barBudget) + " · 笔 " + str.tostring(array.size(root.pens))
+        for j = 0 to activeLevels - 1
+            Frame frame = array.get(root.frames, j)
+            status += "\nS" + str.tostring(frame.id) + " 段 " + str.tostring(array.size(frame.structure.parts)) + " · " + frame.structure.phase
+        table.cell(panel, 0, 0, status, text_color = chart.fg_color, text_size = size.tiny)
+    else
+        table.clear(panel, 0, 0)
