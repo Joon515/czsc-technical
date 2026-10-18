@@ -4,21 +4,60 @@ indicator("缠论 · 同周期结构层", "缠论结构", overlay = true, scale 
 // 原K严格笔→冻结端点链S1/S2/S3；几何递推不代表全部走势类型。
 string G_STRUCTURE = "结构层"
 string G_DISPLAY = "显示"
+string G_STYLE = "样式"
+string G_HINT = "K线辅助"
+string G_PARAM = "辅助参数"
 string G_ALERT = "提醒"
 string G_ADVANCED = "高级"
-string G_AUX = "MA / MACD / VOL 辅助"
-bool showCandleHints = input.bool(true, "确认K线辅助提示", group = G_AUX, tooltip = "辅助只用辅✓/辅＝/辅?/辅!标在收盘确认K，买向在下、卖向在上；同方向同K聚合，最多保留最近180个。详情悬浮查看，不画MA/MACD/VOL曲线或数值面板。")
-bool requireAuxSupport = input.bool(false, "候选仅显示/提醒三辅支持", group = G_AUX, tooltip = "可选保守筛选：MA平均分离减弱、MACD柱面积减弱且黄白线峰值不增强、均量缩小三者齐备。不是原文硬三合规则，不改变结构存储、候选身份或3类事件。")
-int maFastLength = input.int(5, "短MA", minval = 1, maxval = 500, group = G_AUX)
-int maSlowLength = input.int(10, "长MA", minval = 2, maxval = 1000, group = G_AUX)
-float lipFraction = input.float(0.5, "唇吻近似：最小间距/前分离峰值", minval = 0.05, maxval = 0.95, step = 0.05, group = G_AUX, tooltip = "原文定性，没有数值阈值。穿越归湿吻；未穿越按间距收敛比例近似区分飞/唇。")
-int macdFastLength = input.int(12, "MACD快", minval = 1, maxval = 500, group = G_AUX)
-int macdSlowLength = input.int(26, "MACD慢", minval = 2, maxval = 1000, group = G_AUX)
-int macdSignalLength = input.int(9, "MACD信号", minval = 1, maxval = 500, group = G_AUX)
-float zeroFraction = input.float(0.2, "回零参考：前段黄白线峰值比例", minval = 0.01, maxval = 1, step = 0.05, group = G_AUX, tooltip = "两条线同时落入各自前同向段峰值的此比例内，才记间隔回零参考；并不证明A/B/C角色。")
-int volLength = input.int(20, "量能前序均量根数", minval = 2, maxval = 500, group = G_AUX)
-float volExpand = input.float(2, "放量参考倍数", minval = 1.01, step = 0.1, group = G_AUX)
-float volContract = input.float(0.5, "缩量参考倍数", minval = 0.01, maxval = 0.99, step = 0.05, group = G_AUX)
+
+bool overlayLevels = input.bool(true, "叠加S2/S3结构层", group = G_STRUCTURE, tooltip = "S2/S3接下层确认段的冻结端点，按原K裁切；关闭只保留S1。仅本图几何结构层，不是多周期或完整走势类型证明。")
+int levelCount = input.int(3, "结构层数", minval = 1, maxval = 3, group = G_STRUCTURE, active = overlayLevels)
+bool showSegments = input.bool(true, "确认线段", group = G_DISPLAY)
+bool showCenters = input.bool(true, "中枢", group = G_DISPLAY, tooltip = "固定ZD/ZG闭交核心；时间边界随已接纳成员延伸，首次完整回试不返回即冻结。GG/DD仅用于趋势判断。")
+bool showCandidate = input.bool(true, "1?/2?候选", group = G_DISPLAY, tooltip = "仅结构候选，缺严格力度证据；2?含标准继承及小转大路径。3类按第20课，边界含等号。")
+bool showPens = input.bool(false, "确认笔", group = G_DISPLAY, tooltip = "第77课标准K间隔与分型区间条件，不缩短笔。")
+bool showOpen = input.bool(false, "未完成虚线", group = G_DISPLAY, tooltip = "可变化，不作上层输入、分类或提醒。")
+bool showStatus = input.bool(false, "状态面板", group = G_DISPLAY)
+bool showCandleHints = input.bool(true, "确认K辅助标记", group = G_HINT, tooltip = "收盘确认K上标：●支持 ○中性 ?缺项 !冲突；买向在下、卖向在上。悬浮看依据。仅辅助，不改变买卖点或提醒。")
+bool requireAuxSupport = input.bool(false, "候选仅三辅支持", group = G_HINT, tooltip = "可选保守筛选：1?/2?需MA、MACD、量能均对前同向段减弱才显示/提醒。不是原文硬三合规则。")
+int maFastLength = input.int(5, "短MA", minval = 1, maxval = 500, group = G_PARAM, inline = "ma")
+int maSlowLength = input.int(10, "长MA", minval = 2, maxval = 1000, group = G_PARAM, inline = "ma")
+int macdFastLength = input.int(12, "MACD快", minval = 1, maxval = 500, group = G_PARAM, inline = "macd")
+int macdSlowLength = input.int(26, "慢", minval = 2, maxval = 1000, group = G_PARAM, inline = "macd")
+int macdSignalLength = input.int(9, "信号", minval = 1, maxval = 500, group = G_PARAM, inline = "macd")
+int volLength = input.int(20, "量能均量根数", minval = 2, maxval = 500, group = G_PARAM, inline = "vol")
+float volExpand = input.float(2, "放量×", minval = 1.01, step = 0.1, group = G_PARAM, inline = "vol")
+float volContract = input.float(0.5, "缩量×", minval = 0.01, maxval = 0.99, step = 0.05, group = G_PARAM, inline = "vol")
+bool alertPoints = input.bool(true, "确认买卖事件", group = G_ALERT)
+bool alertCenters = input.bool(true, "收盘进出中枢", group = G_ALERT)
+bool alertIntrabar = input.bool(true, "盘中进出中枢", group = G_ALERT, tooltip = "现价相对前一确认收盘与最新确认中枢：盘中离开上/下沿、回到中枢内。中枢仍来自确认结构，可能收盘前出现、收盘后撤回。频率选“每根K线一次”。不含买卖点，买卖点仍只在确认后提醒。")
+bool alertCandidates = input.bool(false, "1?/2?候选提醒", group = G_ALERT, tooltip = "默认关闭。")
+bool alertConfluence = input.bool(true, "同向结构层合取", group = G_ALERT, tooltip = "同类别×方向×候选状态的不同S层，仅关联几何证据。收盘新事件统一合取；重复或过期不重触发。")
+int minConfluenceLevels = input.int(2, "合取最少层数", minval = 2, maxval = 3, group = G_ALERT)
+int confluenceBars = input.int(20, "合取窗口（本图K）", minval = 1, maxval = 10000, group = G_ALERT)
+string directionFilter = input.string("全部", "方向", options = ["全部", "只买", "只卖"], group = G_ALERT, inline = "filter")
+string classFilter = input.string("全部", "类别", options = ["全部", "3", "1?", "2?"], group = G_ALERT, inline = "filter")
+int alertLevel = input.int(0, "提醒层（0=全部显示层）", minval = 0, maxval = 3, group = G_ALERT)
+float lipFraction = input.float(0.5, "唇吻近似：最小间距/前分离峰值", minval = 0.05, maxval = 0.95, step = 0.05, group = G_ADVANCED, tooltip = "原文定性，没有数值阈值。穿越归湿吻；未穿越按间距收敛比例近似区分飞/唇。")
+float zeroFraction = input.float(0.2, "回零参考比例", minval = 0.01, maxval = 1, step = 0.05, group = G_ADVANCED, tooltip = "两条线同时落入各自前同向段峰值的此比例内，才记间隔回零参考；并不证明A/B/C角色。")
+int barBudget = input.int(18000, "已确认原K预算", minval = 500, maxval = 60000, group = G_ADVANCED, tooltip = "耗尽则停止全链并保留已确认状态、显示原因；不滚动裁剪。左侧结构未知。")
+int stateBudget = input.int(6000, "每类结构对象预算", minval = 100, maxval = 15000, group = G_ADVANCED, tooltip = "各类计算对象和特征重放分别限额；绘图淘汰不影响计算。")
+
+// 样式全部为输入项：Pine的Style页只收plot类对象，标签/线/框的颜色与字号不进入该页。
+color buyColor = input.color(#089981, "买向颜色", group = G_STYLE)
+color sellColor = input.color(#F23645, "卖向颜色", group = G_STYLE)
+color warnColor = input.color(#F0B90B, "冲突提示颜色", group = G_STYLE)
+color s1Color = input.color(#2962FF, "S1颜色", group = G_STYLE)
+color s2Color = input.color(#FF9800, "S2颜色", group = G_STYLE)
+color s3Color = input.color(#9C27B0, "S3颜色", group = G_STYLE)
+color penColor = input.color(#2896F0, "笔颜色", group = G_STYLE)
+string infoTextChoice = input.string("小", "K线提示/状态字号", options = ["小", "正常", "大", "超大"], group = G_STYLE)
+string pointTextChoice = input.string("正常", "结构点字号", options = ["小", "正常", "大", "超大"], group = G_STYLE)
+string infoTextSize = infoTextChoice == "小" ? size.small : infoTextChoice == "大" ? size.large : infoTextChoice == "超大" ? size.huge : size.normal
+string pointTextSize = pointTextChoice == "小" ? size.small : pointTextChoice == "大" ? size.large : pointTextChoice == "超大" ? size.huge : size.normal
+// 中性灰随图表前景色自适应，不作为输入。
+color MUTED_INK = color.new(chart.fg_color, 40)
+
 // 连续计算，不让暖机/辅助缺值门控原K结构摄入；量基线排除本根且不跳过缺量。
 float maFast = ta.sma(close, maFastLength)
 float maSlow = ta.sma(close, maSlowLength)
@@ -28,33 +67,6 @@ float volMissing = math.sum(na(volume) ? 1 : 0, volLength)
 float priorVolMean = bar_index >= volLength and volMissing[1] == 0 ? volSum[1] / volLength : na
 float currentVolRatio = not na(volume) and priorVolMean > 0 ? volume / priorVolMean : na
 
-bool overlayLevels = input.bool(true, "叠加本图结构层", group = G_STRUCTURE, tooltip = "S1接确认笔，S2/S3接下层确认段的冻结端点；实际范围按原K裁切。仅本图几何结构层，非多周期或完整走势类型证明。关闭只保留S1。")
-int levelCount = input.int(3, "结构层数", minval = 1, maxval = 3, group = G_STRUCTURE)
-bool showPens = input.bool(false, "确认笔", group = G_DISPLAY, tooltip = "第77课标准K间隔与分型区间条件，不缩短笔。")
-bool showSegments = input.bool(true, "确认线段", group = G_DISPLAY)
-bool showCenters = input.bool(true, "中枢核心", group = G_DISPLAY, tooltip = "固定ZD/ZG闭交核心，含单价；时间边界只随已接纳成员延伸，离开暂存，首次完整回试不返回即冻结。GG/DD仅用于趋势判断。")
-bool showCandidate = input.bool(true, "1?/2?结构候选", group = G_DISPLAY, tooltip = "1?/2?仅结构候选，缺严格力度证据；2?含标准继承及小转大路径。3类按第20课，边界含等号。")
-bool showOpen = input.bool(false, "未完成结构虚线", group = G_DISPLAY, tooltip = "可变化，不作上层输入、分类或提醒。")
-bool showStatus = input.bool(false, "简要状态", group = G_DISPLAY)
-color penColor = input.color(color.rgb(40, 150, 240), "笔颜色", group = G_DISPLAY)
-color s1Color = input.color(color.rgb(40, 150, 240), "S1颜色", group = G_DISPLAY)
-color s2Color = input.color(color.rgb(235, 135, 35), "S2颜色", group = G_DISPLAY)
-color s3Color = input.color(color.rgb(175, 85, 215), "S3颜色", group = G_DISPLAY)
-string infoTextChoice = input.string("正常", "K线提示/状态字号", options = ["小", "正常", "大", "超大"], group = G_DISPLAY)
-string pointTextChoice = input.string("正常", "买卖点字号", options = ["小", "正常", "大", "超大"], group = G_DISPLAY)
-string infoTextSize = infoTextChoice == "小" ? size.small : infoTextChoice == "大" ? size.large : infoTextChoice == "超大" ? size.huge : size.normal
-string pointTextSize = pointTextChoice == "小" ? size.small : pointTextChoice == "大" ? size.large : pointTextChoice == "超大" ? size.huge : size.normal
-int barBudget = input.int(18000, "已确认原K预算", minval = 500, maxval = 60000, group = G_ADVANCED, tooltip = "耗尽停止全链并保留确认状态，显示原因；不滚动裁剪。左侧结构未知。")
-int stateBudget = input.int(6000, "每类结构对象预算", minval = 100, maxval = 15000, group = G_ADVANCED, tooltip = "各类计算对象和特征重放分别限额；绘图淘汰不影响计算。")
-bool alertPoints = input.bool(true, "确认买卖事件", group = G_ALERT)
-bool alertCenters = input.bool(true, "收盘进出既有中枢", group = G_ALERT)
-bool alertCandidates = input.bool(false, "候选提醒", group = G_ALERT, tooltip = "默认关闭1?/2?提醒。")
-bool alertConfluence = input.bool(true, "同方向结构层合取", group = G_ALERT, tooltip = "同类别×方向×候选状态的不同S层，仅关联几何证据。收盘新事件统一合取；重复或过期不重触发。")
-int minConfluenceLevels = input.int(2, "合取最少层数", minval = 2, maxval = 3, group = G_ALERT)
-int confluenceBars = input.int(20, "确认间隔窗口（本图K）", minval = 1, maxval = 10000, group = G_ALERT)
-string directionFilter = input.string("全部", "方向过滤", options = ["全部", "只买", "只卖"], group = G_ALERT)
-string classFilter = input.string("全部", "类别过滤", options = ["全部", "3", "1?", "2?"], group = G_ALERT)
-int alertLevel = input.int(0, "提醒层（0=所有显示层）", minval = 0, maxval = 3, group = G_ALERT)
 int activeLevels = overlayLevels ? levelCount : 1
 int DRAW_LINES = 360
 int DRAW_BOXES = 180
@@ -73,8 +85,6 @@ type MaCycle
     bool known
     int basisAt
     int basisBt
-    float areaRatio
-    float meanRatio
 
 type MaState
     string kiss = "未见吻（近似）"
@@ -83,8 +93,6 @@ type MaState
     int cycleAt = na
     float area = 0.0
     int bars = 0
-    float areaRatio = na
-    float meanRatio = na
     int kissOrigin = 0
     int lastTime = na
     float prevFast = na
@@ -105,54 +113,6 @@ type MaState
 f_maNew() =>
     MaState.new()
 
-f_maRatio(float value, float basis) =>
-    // 零面积或未知基准不是零力度比，也不越过最近同向周期另找更早基准。
-    float result = not na(value) and not na(basis) and value > 0 and basis > 0 ? value / basis : na
-    result
-
-f_maNumber(float value) =>
-    string result = na(value) ? "未知" : str.tostring(value, "#.###")
-    result
-
-f_maSide(int dir) =>
-    dir > 0 ? "上涨" : dir < 0 ? "下跌" : "方向未知"
-
-f_maBoundary(int t) =>
-    string result = na(t) ? "左界未知" : str.format_time(t, "yyyy-MM-dd HH:mm", "Etc/UTC")
-    result
-
-f_maSpan(int at, int bt) =>
-    "[" + f_maBoundary(at) + "," + f_maBoundary(bt) + ")UTC"
-
-f_maText(MaState s, bool detailed = false) =>
-    string caption = na(s.prevFast) ? "MA待有效值" : "MA " + s.kiss + (s.kissing ? "·吻中" : "·分离")
-    if s.hasLast
-        MaCycle done = s.lastCycle
-        caption += "\n完成" + f_maSide(done.dir) + " 面积×" + f_maNumber(s.areaRatio) + " 均力×" + f_maNumber(s.meanRatio)
-        if detailed
-            caption += "\n" + f_maSpan(done.at, done.bt) + " 面积=" + f_maNumber(done.area) + "（" + str.tostring(done.bars) + "图K）"
-            if not na(done.basisAt)
-                caption += " 对" + f_maSpan(done.basisAt, done.basisBt)
-            else
-                caption += done.known ? "（无同向基准）" : "（左侧未知，不作基准）"
-    else
-        caption += "\n完成比较未知"
-    if not na(s.prevFast)
-        if s.kissing
-            caption += "\n吻中不累计；等待分离"
-        else
-            float mean = s.bars > 0 ? s.area / s.bars : na
-            float basisMean = na
-            if s.dir > 0 and s.hasUp
-                basisMean := s.upCycle.bars > 0 ? s.upCycle.area / s.upCycle.bars : na
-            else if s.dir < 0 and s.hasDown
-                basisMean := s.downCycle.bars > 0 ? s.downCycle.area / s.downCycle.bars : na
-            float provisionalRatio = na(s.cycleAt) ? na : f_maRatio(mean, basisMean)
-            caption += "\n暂态" + f_maSide(s.dir) + " 均力=" + f_maNumber(mean) + "价 · 同向×" + f_maNumber(provisionalRatio)
-            if detailed
-                caption += "（" + str.tostring(s.bars) + "有效图K） " + (na(s.cycleAt) ? "左界未知" : "自" + f_maBoundary(s.cycleAt) + "UTC")
-    caption + (detailed ? "\n面积价·图K；均力价；[吻结束,后吻开始)，结束根入/开始根不入；缺值清链与基准" : "")
-
 f_maReset(MaState s) =>
     // 保留lastTime：同一根即使重复送入缺值也不能重置或重复累计。
     s.kiss := "未见吻（近似）"
@@ -161,8 +121,6 @@ f_maReset(MaState s) =>
     s.cycleAt := na
     s.area := 0.0
     s.bars := 0
-    s.areaRatio := na
-    s.meanRatio := na
     s.prevFast := na
     s.prevDiff := na
     s.prevSlope := na
@@ -184,16 +142,12 @@ f_maFreeze(MaState s, int t) =>
     bool known = not na(s.cycleAt) and s.bars > 0 and s.dir != 0
     int basisAt = na
     int basisBt = na
-    s.areaRatio := na
-    s.meanRatio := na
     if known and (s.dir > 0 ? s.hasUp : s.hasDown)
         MaCycle basis = s.dir > 0 ? s.upCycle : s.downCycle
         basisAt := basis.at
         basisBt := basis.bt
-        s.areaRatio := f_maRatio(s.area, basis.area)
-        s.meanRatio := f_maRatio(s.area / s.bars, basis.bars > 0 ? basis.area / basis.bars : na)
     // 仅吻开始时分配一个冻结快照；同向基准共享它，不再修改历史完成边界。
-    MaCycle done = MaCycle.new(s.dir, s.cycleAt, t, s.area, s.bars, known, basisAt, basisBt, s.areaRatio, s.meanRatio)
+    MaCycle done = MaCycle.new(s.dir, s.cycleAt, t, s.area, s.bars, known, basisAt, basisBt)
     s.lastCycle := done
     s.hasLast := true
     if known
@@ -495,7 +449,7 @@ f_line(int at, float a, int bt, float b, color ink, int width) =>
 
 f_centerDrawing(Frame frame, Center c) =>
     if showCenters
-        c.drawing := box.new(c.at, c.zg, c.bt, c.zd, xloc = xloc.bar_time, extend = extend.none, border_color = color.new(frame.ink, 35), bgcolor = color.new(frame.ink, 94), text = "S" + str.tostring(frame.id), text_color = frame.ink, text_size = infoTextSize, force_overlay = true)
+        c.drawing := box.new(c.at, c.zg, c.bt, c.zd, xloc = xloc.bar_time, extend = extend.none, border_color = color.new(frame.ink, 55), bgcolor = color.new(frame.ink, 92), text = "S" + str.tostring(frame.id), text_color = MUTED_INK, text_size = infoTextSize, force_overlay = true)
         array.push(boxQueue, c)
         if array.size(boxQueue) > DRAW_BOXES
             Center old = array.shift(boxQueue)
@@ -513,7 +467,7 @@ f_acceptMember(Center c, Leg p, int index) =>
     c.bt
 
 f_time(int t) =>
-    str.format_time(t, "yyyy-MM-dd HH:mm:ss", syminfo.timezone)
+    str.format_time(t, "yyyy-MM-dd HH:mm", syminfo.timezone)
 
 f_ratio(float value, float base) =>
     float result = not na(value) and not na(base) and base > 0 ? value / base : na
@@ -521,11 +475,6 @@ f_ratio(float value, float base) =>
 
 f_number(float value) =>
     string result = na(value) ? "未知" : str.tostring(value, "#.###")
-    result
-
-f_change(float value, float base) =>
-    float ratio = f_ratio(value, base)
-    string result = na(ratio) ? "未知" : (ratio < 1 ? "减弱×" : ratio > 1 ? "增强×" : "持平×") + f_number(ratio)
     result
 
 f_jsonNumber(float value) =>
@@ -553,14 +502,17 @@ f_auxStates(Frame frame) =>
             macd := area == -1 or dif == -1 or dea == -1 ? -1 : area == 1 ? 1 : 2
     [ma, macd, vol]
 
-f_evidenceCaption(int ma, int macd, int vol) =>
-    string maText = ma == 1 ? "MA↓" : ma == -1 ? "MA↑" : ma == 0 ? "MA?" : "MA＝"
-    string macdText = macd == 1 ? "MACD↓" : macd == -1 ? "MACD↑" : macd == 0 ? "MACD?" : "MACD＝"
-    string volText = vol == 1 ? "VOL缩" : vol == -1 ? "VOL放" : vol == 0 ? "VOL?" : "VOL平"
-    string state = ma == 1 and macd == 1 and vol == 1 ? "辅支持" : ma == -1 or macd == -1 or vol == -1 ? "辅冲突" : ma == 0 or macd == 0 or vol == 0 ? "辅缺项" : "辅中性"
-    string caption = maText + " " + macdText + " " + volText + " · " + state
-    caption
+f_stateWord(int v) =>
+    string result = v == 1 ? "减弱" : v == -1 ? "增强" : v == 2 ? "持平" : "缺项"
+    result
 
+f_evidenceWords(int ma, int macd, int vol) =>
+    string result = "MA" + f_stateWord(ma) + " · MACD" + f_stateWord(macd) + " · 量" + f_stateWord(vol)
+    result
+
+f_auxWord(int ma, int macd, int vol) =>
+    string result = ma == 1 and macd == 1 and vol == 1 ? "支持" : ma == -1 or macd == -1 or vol == -1 ? "冲突" : ma == 0 or macd == 0 or vol == 0 ? "缺项" : "中性"
+    result
 
 f_strengthJson(Strength s) =>
     string result = na(s) ? "null" : "{\"start_exclusive\":" + str.tostring(s.at) + ",\"end_inclusive\":" + str.tostring(s.bt) + ",\"direction\":" + str.tostring(s.dir) + ",\"bars\":" + str.tostring(s.bars) + ",\"macd_area\":" + f_jsonNumber(s.area) + ",\"dif_peak\":" + f_jsonNumber(s.difPeak) + ",\"dea_peak\":" + f_jsonNumber(s.deaPeak) + ",\"mean_volume\":" + f_jsonNumber(s.meanVol) + ",\"ma_mean_gap\":" + f_jsonNumber(s.maMean) + ",\"ma_kiss_at_end\":\"" + s.maKiss + "\"}"
@@ -570,27 +522,27 @@ f_auxJson(Frame frame, int ma, int macd, int vol) =>
     string result = "{\"scope\":\"same_layer_same_direction_confirmed_leg\",\"current\":" + f_strengthJson(frame.currentStrength) + ",\"previous\":" + f_strengthJson(frame.previousStrength) + ",\"intervening_zero_reference\":" + (frame.returnZero < 0 ? "null" : frame.returnZero > 0 ? "true" : "false") + ",\"evidence\":{\"ma\":" + str.tostring(ma) + ",\"macd\":" + str.tostring(macd) + ",\"volume\":" + str.tostring(vol) + ",\"supported\":" + (ma == 1 and macd == 1 and vol == 1 ? "true" : "false") + "}}"
     result
 
-f_strengthText(Frame frame, bool detailed = false) =>
+f_ratioText(float value, float base) =>
+    float ratio = f_ratio(value, base)
+    string result = na(ratio) ? "未知" : "×" + str.tostring(ratio, "#.##")
+    result
+
+f_sigCaption(Signal s) =>
+    string result = str.tostring(s.category) + (s.candidate ? "?" : "") + (s.dir > 0 ? "买" : "卖") + "·S" + str.tostring(s.level)
+    result
+
+// 对前同向段的比值：×<1减弱、×>1增强；完整数值与冻结端点在JSON。
+f_strengthLine(Frame frame) =>
     Strength s = frame.currentStrength
     Strength p = frame.previousStrength
-    string caption = "等待确认段"
+    string result = "等待确认段"
     if not na(s)
-        caption := (s.dir > 0 ? "上行段" : "下行段") + " · " + str.tostring(s.bars) + "K"
+        result := (s.dir > 0 ? "上行" : "下行") + " " + str.tostring(s.bars) + "K"
         if na(p)
-            caption += " · 无前同向基准"
+            result += " · 无前同向段，无比较基准"
         else
-            caption += " · MA段均距 " + f_change(s.maMean, p.maMean) + " · MACD " + f_change(s.area, p.area) + " · 均量 " + f_change(s.meanVol, p.meanVol)
-            caption += "\nDIF " + f_change(s.difPeak, p.difPeak) + " · DEA " + f_change(s.deaPeak, p.deaPeak) + " · 间隔回零" + (frame.returnZero < 0 ? "未知" : frame.returnZero > 0 ? "有参考" : "未见")
-        [ma, macd, vol] = f_auxStates(frame)
-        caption += "\n" + f_evidenceCaption(ma, macd, vol) + " · 端点" + s.maKiss
-        if detailed
-            caption += "\n当前(" + f_time(s.at) + ", " + f_time(s.bt) + "]；柱面积 " + f_number(s.area) + "；均量 " + f_number(s.meanVol)
-            if not na(p)
-                caption += "\n前同向(" + f_time(p.at) + ", " + f_time(p.bt) + "]；柱面积 " + f_number(p.area) + "；均量 " + f_number(p.meanVol)
-            caption += "\nMA为段内方向平均分离，非第15课吻间面积；↑增强/反证、↓减弱参考，三辅支持仅是可选保守筛选。"
-            caption += "\n仅本层同向冻结段辅助；不证明完整走势、A/B/C角色或严格背驰。"
-    caption
-
+            result += " · 对前同向段（<1减弱 >1增强）\nMA " + f_ratioText(s.maMean, p.maMean) + " · 均量 " + f_ratioText(s.meanVol, p.meanVol) + "\nMACD面积 " + f_ratioText(s.area, p.area) + " · DIF " + f_ratioText(s.difPeak, p.difPeak) + " · DEA " + f_ratioText(s.deaPeak, p.deaPeak)
+    result
 
 f_emit(Frame frame, int category, int dir, bool candidate, int occurred, int confirmed, float price, string note) =>
     Level lv = frame.structure
@@ -598,8 +550,8 @@ f_emit(Frame frame, int category, int dir, bool candidate, int occurred, int con
     bool duplicate = not na(prior) and prior.occurred == occurred
     Signal s = duplicate ? prior : Signal.new(frame.id, category, dir, candidate, occurred, confirmed, bar_index, price)
     if not duplicate
-        string caption = timeframe.period + "·S" + str.tostring(frame.id) + "·" + str.tostring(category) + (candidate ? "?" : "") + (dir > 0 ? "买" : "卖")
-        string tip = "发生：" + f_time(occurred) + "\n确认：" + f_time(confirmed) + "\n观察：" + f_time(time_close) + "\n发生价：" + str.tostring(price, format.mintick) + "\n历史极点位置不等于当时已知；确认后标签不搬移。\n" + note
+        string caption = f_sigCaption(s)
+        string tip = caption + (candidate ? "（结构候选）" : "（确认）") + "\n" + note + "\n发生 " + f_time(occurred) + " · 确认 " + f_time(confirmed) + " · 观察 " + f_time(time_close) + "\n价格 " + str.tostring(price, format.mintick)
         if category > 0
             [ma, macd, vol] = f_auxStates(frame)
             s.auxMa := ma
@@ -607,11 +559,14 @@ f_emit(Frame frame, int category, int dir, bool candidate, int occurred, int con
             s.auxVol := vol
             s.auxSupported := ma == 1 and macd == 1 and vol == 1
             s.auxiliary := f_auxJson(frame, ma, macd, vol)
-            s.auxTip := caption + "\n" + tip + "\n" + f_strengthText(frame, true)
+            s.auxTip := "辅助 " + f_auxWord(ma, macd, vol) + "：" + f_evidenceWords(ma, macd, vol) + "\n" + f_strengthLine(frame)
+            tip += "\n\n" + s.auxTip
         array.push(fresh, s)
         bool eligible = not candidate or not requireAuxSupport or s.auxSupported
         if category > 0 and (not candidate or showCandidate) and eligible
-            label id = label.new(occurred, price, caption, xloc = xloc.bar_time, yloc = yloc.price, style = dir > 0 ? label.style_arrowup : label.style_arrowdown, color = color.new(frame.ink, candidate ? 55 : 15), textcolor = frame.ink, size = pointTextSize, tooltip = tip, force_overlay = true)
+            // 箭头锚在发生价；候选半透明，确认实色。
+            color signalColor = color.new(dir > 0 ? buyColor : sellColor, candidate ? 50 : 0)
+            label id = label.new(occurred, price, caption, xloc = xloc.bar_time, yloc = yloc.price, style = dir > 0 ? label.style_arrowup : label.style_arrowdown, color = signalColor, textcolor = signalColor, size = pointTextSize, tooltip = tip, force_overlay = true)
             array.push(labelQueue, id)
             if array.size(labelQueue) > DRAW_LABELS
                 label.delete(array.shift(labelQueue))
@@ -934,7 +889,7 @@ f_segmentConfirm(Root e, Frame frame, array<Leg> lower, int endpoint, float pivo
         bool accepted = f_levelPart(e, frame, segment, confirmed)
         if accepted
             if showSegments
-                f_line(segment.at, segment.a, segment.bt, segment.b, frame.ink, frame.id + 1)
+                f_line(segment.at, segment.a, segment.bt, segment.b, frame.ink, frame.id)
             s.start := endpoint
             s.anchorPrice := pivotPrice
             s.anchorTime := pivotTime
@@ -1212,7 +1167,7 @@ f_pending(Root e, int currentTime, float currentPrice) =>
             SegmentBuilder s = frame.builder
             if s.dir != 0 and not na(s.anchorTime)
                 if na(frame.openSegment)
-                    frame.openSegment := line.new(s.anchorTime, s.anchorPrice, currentTime, currentPrice, xloc = xloc.bar_time, style = line.style_dashed, color = color.new(frame.ink, 40), width = frame.id + 1, force_overlay = true)
+                    frame.openSegment := line.new(s.anchorTime, s.anchorPrice, currentTime, currentPrice, xloc = xloc.bar_time, style = line.style_dashed, color = color.new(frame.ink, 35), width = frame.id, force_overlay = true)
                 else
                     line.set_xy1(frame.openSegment, s.anchorTime, s.anchorPrice)
                     line.set_xy2(frame.openSegment, currentTime, currentPrice)
@@ -1238,12 +1193,19 @@ f_hintRank(Signal s) =>
     int rank = s.auxMa == -1 or s.auxMacd == -1 or s.auxVol == -1 ? 3 : s.auxMa == 0 or s.auxMacd == 0 or s.auxVol == 0 ? 2 : s.auxSupported ? 0 : 1
     rank
 
+f_rankWord(int rank) =>
+    string result = rank == 0 ? "支持" : rank == 1 ? "中性" : rank == 2 ? "缺项" : "冲突"
+    result
+
 f_candleHints(Root e) =>
     if barstate.isconfirmed and showCandleHints and array.size(fresh) > 0
-        string common = ""
+        string summary = "MA" + (na(e.ma.prevFast) ? "待有效值" : e.ma.kissing ? "吻中" : "分离")
+        if array.size(e.raw) > 0
+            RawBar k = array.get(e.raw, array.size(e.raw) - 1)
+            summary := "本K MACD柱 " + (k.hist > 0 ? "+" : "") + f_number(k.hist) + " · " + (na(e.volRatio) ? "量比未知" : "量比 " + str.tostring(e.volRatio, "#.##") + "×") + " · " + summary
         for side = 0 to 1
             int direction = side == 0 ? 1 : -1
-            string details = ""
+            string events = ""
             int count = 0
             int rank = 0
             for j = 0 to array.size(fresh) - 1
@@ -1252,21 +1214,15 @@ f_candleHints(Root e) =>
                 if s.category > 0 and s.dir == direction and eligible
                     count += 1
                     rank := math.max(rank, f_hintRank(s))
-                    details += (count > 1 ? "\n\n" : "") + s.auxTip
+                    events += "\n\n" + f_sigCaption(s) + "\n" + s.auxTip
             if count > 0
-                if common == ""
-                    common := "确认K收盘：" + f_time(time_close) + "\n提示属于这根确认K，不回标为当时已知的信号；仅辅助，不升级候选。\n" + f_maText(e.ma, true)
-                    if array.size(e.raw) > 0
-                        RawBar k = array.get(e.raw, array.size(e.raw) - 1)
-                        common += "\n本K MACD DIF " + f_number(k.dif) + " / DEA " + f_number(k.dea) + " / 柱 " + f_number(k.hist)
-                        common += "\n本K VOL " + f_number(k.vol) + " / 前" + str.tostring(volLength) + "K均量×" + f_number(e.volRatio)
-                    if e.volumeCooling
-                        common += "\n放量后骤缩：缠绕风险参考，不是独立卖点。"
-                string caption = rank == 0 ? "辅✓" : rank == 1 ? "辅＝" : rank == 2 ? "辅?" : "辅!"
-                color ink = rank == 0 ? color.teal : rank == 1 ? color.blue : rank == 2 ? color.gray : color.orange
-                string tip = common + "\n\n本K确认" + str.tostring(count) + "个" + (direction > 0 ? "买向" : "卖向") + "结构事件：\n" + details
                 // 真实当前K高低价 + 相对K线位置；不绘辅助数值、不引入成交量坐标。
-                label id = label.new(time, direction > 0 ? low : high, caption, xloc = xloc.bar_time, yloc = direction > 0 ? yloc.belowbar : yloc.abovebar, style = direction > 0 ? label.style_label_up : label.style_label_down, color = color.new(ink, 20), textcolor = color.white, size = infoTextSize, tooltip = tip, force_overlay = true)
+                string glyph = rank == 0 ? "●" : rank == 1 ? "○" : rank == 2 ? "?" : "!"
+                color ink = rank == 0 ? (direction > 0 ? buyColor : sellColor) : rank == 3 ? warnColor : MUTED_INK
+                string tip = (direction > 0 ? "买向" : "卖向") + " · " + str.tostring(count) + "个结构事件 · 确认K " + f_time(time_close) + "\n辅助（同向取最差）：" + f_rankWord(rank) + "\n" + summary + events + "\n\n辅助只标在确认K，不回标发生时，不升级候选。"
+                if e.volumeCooling
+                    tip += "\n放量后骤缩：缠绕风险参考，不是独立卖点。"
+                label id = label.new(time, direction > 0 ? low : high, glyph, xloc = xloc.bar_time, yloc = direction > 0 ? yloc.belowbar : yloc.abovebar, style = label.style_none, color = color.new(chart.bg_color, 100), textcolor = ink, size = infoTextSize, tooltip = tip, force_overlay = true)
                 array.push(hintQueue, id)
                 if array.size(hintQueue) > DRAW_HINTS
                     label.delete(array.shift(hintQueue))
@@ -1377,6 +1333,27 @@ alertcondition(entered, "确认收盘进入既有中枢", "{{ticker}} 本图确�
 alertcondition(exited, "确认收盘离开既有中枢", "{{ticker}} 本图确认收盘离开既有中枢。")
 alertcondition(confluenceBuy, "买向结构层合取", "{{ticker}} 同类别买向事件达到不同结构层合取阈值。")
 alertcondition(confluenceSell, "卖向结构层合取", "{{ticker}} 同类别卖向事件达到不同结构层合取阈值。")
+
+// 盘中：每个实时tick只读最新确认中枢与前一确认收盘，不写状态；中枢仍是滞后的确认结构。
+bool intraExitUp = false
+bool intraExitDown = false
+bool intraEnter = false
+if alertIntrabar
+    float intraPriorClose = close[1]
+    if not na(intraPriorClose)
+        for j = 0 to activeLevels - 1
+            Frame frame = array.get(root.frames, j)
+            Center c = frame.structure.active
+            // 当根确认新形成的中枢不参与盘中判定，与收盘进出的 formed < confirmed 一致。
+            if f_levelAllowed(frame.id) and not na(c) and c.formed < time_close
+                bool intraPriorInside = intraPriorClose >= c.zd and intraPriorClose <= c.zg
+                bool intraNowInside = close >= c.zd and close <= c.zg
+                intraExitUp := intraExitUp or (intraPriorInside and close > c.zg)
+                intraExitDown := intraExitDown or (intraPriorInside and close < c.zd)
+                intraEnter := intraEnter or (not intraPriorInside and intraNowInside)
+alertcondition(intraExitUp, "盘中离开既有中枢（上沿）", "{{ticker}} 盘中现价离开最新确认中枢上沿；未收盘，可能回撤。")
+alertcondition(intraExitDown, "盘中离开既有中枢（下沿）", "{{ticker}} 盘中现价离开最新确认中枢下沿；未收盘，可能回撤。")
+alertcondition(intraEnter, "盘中回到既有中枢内", "{{ticker}} 盘中现价回到最新确认中枢内；未收盘，可能回撤。")
 
 // 无MA/MACD/VOL数值曲线、量轴或辅助面板；全部辅助信息收在确认K悬浮提示。
 var table panel = table.new(position.top_right, 1, 1, bgcolor = color.new(chart.bg_color, 10))

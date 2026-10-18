@@ -42,6 +42,7 @@ const snapshot = context => {
 const events = context => records(context).flatMap(record => record.events ?? []);
 const tradingEvents = context => events(context).filter(event => ['1?', '2?', '3'].includes(event.category));
 const segments = context => drawings(context, 'lines').filter(line => !line._deleted && line.style === 'style_solid');
+const drawnAs = (line, unit) => line.x1 === unit.at && line.y1 === unit.a && line.x2 === unit.bt && line.y2 === unit.b;
 const boxes = context => drawings(context, 'boxes').filter(box => !box._deleted);
 const rectangle = box => [box.left, box.bottom, box.right, box.top];
 const frame = (context, id) => snapshot(context).frames.find(item => item.id === id);
@@ -217,9 +218,9 @@ test('default enabled S2/S3 recursively form distinct units; disabling the overl
   assert.deepEqual(snapshot(all).frames.map(item=>item.id),[1,2,3]);
   assert.ok(units(all, 2).some(unit => unit.a === 40 && unit.b === 124));
   assert.ok(units(all, 3).some(unit => unit.a === 40 && unit.b === 160));
-  assert.ok(segments(all).some(line => line.width === 3));
-  assert.ok(segments(all).some(line => line.width === 4));
-  assert.ok(!segments(one).some(line => line.width > 2));
+  assert.ok(units(all, 2).some(unit => segments(all).some(line => drawnAs(line, unit))));
+  assert.ok(units(all, 3).some(unit => segments(all).some(line => drawnAs(line, unit))));
+  assert.ok(segments(one).every(line => units(one).some(unit => drawnAs(line, unit))));
 });
 
 test('recursive units map real raw extrema and confirmed connected-node spans without copying layer output', async () => {
