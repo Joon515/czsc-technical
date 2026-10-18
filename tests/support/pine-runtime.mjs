@@ -5,7 +5,7 @@ let sourceCache;
 
 function provider(data) {
   return {
-    configure() {},
+    configure() { },
     async getSymbolInfo() {
       return {
         ticker: 'FIXTURE', tickerid: 'TEST:FIXTURE', main_tickerid: 'TEST:FIXTURE',
@@ -38,5 +38,8 @@ export async function execute({ data, inputs = {}, nativeSource, append = '' }) 
 }
 
 export function drawings(context, type) {
-  return context.plots[`__${type}__`]?.data.at(-1)?.value || [];
+  // PineTS routes force_overlay drawings to a separate container. Keep both real snapshots.
+  const regular = context.plots[`__${type}__`]?.data.at(-1)?.value ?? [];
+  const overlay = context.plots[`__${type}_overlay__`]?.data.at(-1)?.value ?? [];
+  return regular.length ? (overlay.length ? regular.concat(overlay) : regular) : overlay;
 }
