@@ -2,6 +2,7 @@
 indicator("缠论 · 同周期结构层", "缠论结构", overlay = true, scale = scale.none, max_lines_count = 500, max_boxes_count = 500, max_labels_count = 500, max_bars_back = 5000)
 
 // 原K严格笔→冻结端点链S1/S2/S3；几何递推不代表全部走势类型。
+// 不构成投资建议，不承诺准确性；软件按原样提供，作者不承担使用后果。许可见仓库 LICENSE（MIT）。
 string G_STRUCTURE = "结构层"
 string G_DISPLAY = "显示"
 string G_STYLE = "样式"
@@ -30,8 +31,8 @@ float volExpand = input.float(2, "放量×", minval = 1.01, step = 0.1, group = 
 float volContract = input.float(0.5, "缩量×", minval = 0.01, maxval = 0.99, step = 0.05, group = G_PARAM, inline = "vol")
 bool alertPoints = input.bool(true, "确认买卖事件", group = G_ALERT)
 bool alertCenters = input.bool(true, "收盘进出中枢", group = G_ALERT)
-bool alertIntrabar = input.bool(true, "盘中进出中枢", group = G_ALERT, tooltip = "现价相对前一确认收盘与最新确认中枢：盘中离开上/下沿、回到中枢内。中枢仍来自确认结构，可能收盘前出现、收盘后撤回。频率选“每根K线一次”。不含买卖点，买卖点仍只在确认后提醒。")
-bool alertCandidates = input.bool(false, "1?/2?候选提醒", group = G_ALERT, tooltip = "默认关闭。")
+bool alertIntrabar = input.bool(true, "盘中进出中枢", group = G_ALERT, tooltip = "现价对前一确认收盘与最新确认中枢：离开上/下沿、回到中枢内。中枢仍来自确认结构，可能收盘前出现、收盘后撤回。频率选“每根K线一次”。买卖点仍只在确认后提醒。")
+bool alertCandidates = input.bool(false, "1?/2?候选提醒", group = G_ALERT)
 bool alertConfluence = input.bool(true, "同向结构层合取", group = G_ALERT, tooltip = "同类别×方向×候选状态的不同S层，仅关联几何证据。收盘新事件统一合取；重复或过期不重触发。")
 int minConfluenceLevels = input.int(2, "合取最少层数", minval = 2, maxval = 3, group = G_ALERT)
 int confluenceBars = input.int(20, "合取窗口（本图K）", minval = 1, maxval = 10000, group = G_ALERT)
@@ -43,7 +44,7 @@ float zeroFraction = input.float(0.2, "回零参考比例", minval = 0.01, maxva
 int barBudget = input.int(18000, "已确认原K预算", minval = 500, maxval = 60000, group = G_ADVANCED, tooltip = "耗尽则停止全链并保留已确认状态、显示原因；不滚动裁剪。左侧结构未知。")
 int stateBudget = input.int(6000, "每类结构对象预算", minval = 100, maxval = 15000, group = G_ADVANCED, tooltip = "各类计算对象和特征重放分别限额；绘图淘汰不影响计算。")
 
-// 样式全部为输入项：Pine的Style页只收plot类对象，标签/线/框的颜色与字号不进入该页。
+// 标签/线/框不进Style页，颜色与字号须为输入。
 color buyColor = input.color(#089981, "买向颜色", group = G_STYLE)
 color sellColor = input.color(#F23645, "卖向颜色", group = G_STYLE)
 color warnColor = input.color(#F0B90B, "冲突提示颜色", group = G_STYLE)
@@ -55,10 +56,9 @@ string infoTextChoice = input.string("小", "K线提示/状态字号", options =
 string pointTextChoice = input.string("正常", "结构点字号", options = ["小", "正常", "大", "超大"], group = G_STYLE)
 string infoTextSize = infoTextChoice == "小" ? size.small : infoTextChoice == "大" ? size.large : infoTextChoice == "超大" ? size.huge : size.normal
 string pointTextSize = pointTextChoice == "小" ? size.small : pointTextChoice == "大" ? size.large : pointTextChoice == "超大" ? size.huge : size.normal
-// 中性灰随图表前景色自适应，不作为输入。
 color MUTED_INK = color.new(chart.fg_color, 40)
 
-// 连续计算，不让暖机/辅助缺值门控原K结构摄入；量基线排除本根且不跳过缺量。
+// 连续计算：辅助缺值不门控原K摄入；量基线不含本根。
 float maFast = ta.sma(close, maFastLength)
 float maSlow = ta.sma(close, maSlowLength)
 [macdDif, macdDea, macdHist] = ta.macd(close, macdFastLength, macdSlowLength, macdSignalLength)
@@ -73,26 +73,11 @@ int DRAW_BOXES = 180
 int DRAW_LABELS = 240
 int DRAW_HINTS = 180
 
-// 本图MA辅助：第11课的飞/唇/湿是定性描述，以下只作数值近似，不作背驰或结构层。
-// 第15课周期采用半开[前吻结束,后吻开始)：结束根入新周期，开始根不入旧周期。
-// area=每根有效图K的|快线-慢线|之和（价·图K），area/bars为平均间距（价）；不用墙钟时长。
-type MaCycle
-    int dir
-    int at
-    int bt
-    float area
-    int bars
-    bool known
-    int basisAt
-    int basisBt
-
+// MA吻/飞/唇/湿为数值近似，不作背驰或结构层。
 type MaState
     string kiss = "未见吻（近似）"
     bool kissing = false
     int dir = 0
-    int cycleAt = na
-    float area = 0.0
-    int bars = 0
     int kissOrigin = 0
     int lastTime = na
     float prevFast = na
@@ -103,24 +88,12 @@ type MaState
     float kissMin = na
     bool crossed = false
     bool compressed = false
-    bool hasLast = false
-    bool hasUp = false
-    bool hasDown = false
-    MaCycle lastCycle = na
-    MaCycle upCycle = na
-    MaCycle downCycle = na
-
-f_maNew() =>
-    MaState.new()
 
 f_maReset(MaState s) =>
-    // 保留lastTime：同一根即使重复送入缺值也不能重置或重复累计。
+    // 不重置lastTime：重复样本不得重复推进状态。
     s.kiss := "未见吻（近似）"
     s.kissing := false
     s.dir := 0
-    s.cycleAt := na
-    s.area := 0.0
-    s.bars := 0
     s.prevFast := na
     s.prevDiff := na
     s.prevSlope := na
@@ -130,37 +103,10 @@ f_maReset(MaState s) =>
     s.kissOrigin := 0
     s.crossed := false
     s.compressed := false
-    s.hasLast := false
-    s.hasUp := false
-    s.hasDown := false
-    s.lastCycle := na
-    s.upCycle := na
-    s.downCycle := na
     s
 
-f_maFreeze(MaState s, int t) =>
-    bool known = not na(s.cycleAt) and s.bars > 0 and s.dir != 0
-    int basisAt = na
-    int basisBt = na
-    if known and (s.dir > 0 ? s.hasUp : s.hasDown)
-        MaCycle basis = s.dir > 0 ? s.upCycle : s.downCycle
-        basisAt := basis.at
-        basisBt := basis.bt
-    // 仅吻开始时分配一个冻结快照；同向基准共享它，不再修改历史完成边界。
-    MaCycle done = MaCycle.new(s.dir, s.cycleAt, t, s.area, s.bars, known, basisAt, basisBt)
-    s.lastCycle := done
-    s.hasLast := true
-    if known
-        if s.dir > 0
-            s.upCycle := done
-            s.hasUp := true
-        else
-            s.downCycle := done
-            s.hasDown := true
-    s
-
-f_maClass(MaState s, float lipFraction) =>
-    // 左端两线重合但前分离峰未知，吻中先待分类；恢复分离且仅触零时为唇，不冒称穿越。
+f_maClass(MaState s) =>
+    // 吻峰未知时待分类；恢复分离且仅触零才记唇吻。
     string kind = "吻形未知（近似）"
     if s.crossed
         kind := "湿吻（近似）"
@@ -170,8 +116,8 @@ f_maClass(MaState s, float lipFraction) =>
         kind := "唇吻（近似）"
     kind
 
-f_maStep(MaState s, int t, float fast, float slow, float lipFraction) =>
-    // 只接受严格向前的图K时间；重复/迟到样本不改状态，不按时间差补面积。
+f_maStep(MaState s, int t, float fast, float slow) =>
+    // 只接受严格递增的图K时间；重复或迟到样本不改状态。
     if na(t)
         f_maReset(s)
     else if na(s.lastTime) or t > s.lastTime
@@ -183,7 +129,6 @@ f_maStep(MaState s, int t, float fast, float slow, float lipFraction) =>
             float gap = math.abs(diff)
             int side = diff > 0 ? 1 : diff < 0 ? -1 : 0
             if na(s.prevFast)
-                // 载入左端未知，累计可展示但直到观察到吻结束才有完整周期左界。
                 s.dir := side
                 s.peakGap := gap
                 if side == 0
@@ -191,10 +136,7 @@ f_maStep(MaState s, int t, float fast, float slow, float lipFraction) =>
                     s.compressed := true
                     s.kissPeak := gap
                     s.kissMin := gap
-                    s.kiss := f_maClass(s, lipFraction)
-                else
-                    s.area := gap
-                    s.bars := 1
+                    s.kiss := f_maClass(s)
             else
                 float fastSlope = fast - s.prevFast
                 float previousGap = math.abs(s.prevDiff)
@@ -205,38 +147,32 @@ f_maStep(MaState s, int t, float fast, float slow, float lipFraction) =>
                 bool reversing = priorSide != 0 and directedSlope < 0
                 bool shrinking = gap < previousGap
                 if s.kissing
-                    // 碰零原侧反弹不是穿越；记住吻前方向，零值不能丢失换边证据。
+                    // 碰零后原侧反弹不算穿越；记住吻前方向。
                     if s.kissOrigin == 0 and side != 0
                         s.kissOrigin := side
                     s.crossed := s.crossed or side != 0 and s.kissOrigin != 0 and side != s.kissOrigin
                     s.compressed := s.compressed or shrinking
                     s.kissMin := math.min(s.kissMin, gap)
-                    s.kiss := f_maClass(s, lipFraction)
-                    // 仅减速而未缩距的飞吻不能在仍减速时立即结束；须先缩距/穿越，或顺向斜率恢复加快。
+                    s.kiss := f_maClass(s)
+                    // 未缩距的飞吻须先缩距/穿越或斜率恢复，才可结束。
                     bool slopeRecovered = not na(s.prevSlope) and side * fastSlope > side * s.prevSlope
                     bool recovered = s.compressed or s.crossed or slopeRecovered
                     if side != 0 and gap > previousGap and side * fastSlope > 0 and recovered
                         s.kissing := false
-                        s.kiss := f_maClass(s, lipFraction)
-                        s.cycleAt := t
-                        s.area := gap
-                        s.bars := 1
+                        s.kiss := f_maClass(s)
                         s.peakGap := gap
                 else
-                    // 缩距且减速启动；反向/碰零/穿越必启动。未缩距但斜率变缓（含停平）也允许近似飞吻。
+                    // 启动：穿越、反向，或斜率变缓（含未缩距的停平）。
                     bool begins = crossing or reversing or slowing
                     if begins
-                        f_maFreeze(s, t)
                         s.kissing := true
                         s.kissPeak := s.peakGap
                         s.kissMin := gap
                         s.kissOrigin := priorSide
                         s.crossed := side != 0 and priorSide != 0 and side != priorSide
                         s.compressed := shrinking
-                        s.kiss := f_maClass(s, lipFraction)
+                        s.kiss := f_maClass(s)
                     else
-                        s.area += gap
-                        s.bars += 1
                         s.peakGap := math.max(s.peakGap, gap)
                 s.prevSlope := fastSlope
                 s.dir := side
@@ -353,7 +289,7 @@ type SegmentBuilder
     float proposedPrice
     int proposedTime
 
-// 同层同向冻结段摘要；不是完整走势类型或严格背驰证明。
+// 同层同向冻结段摘要，非背驰证明。
 type Strength
     int at
     int bt
@@ -416,7 +352,7 @@ f_root() =>
     for id = 1 to activeLevels
         array.push(frames, f_frame(id))
     Root e = Root.new(array.new<RawBar>(), array.new<K>(), array.new<K>(), 0, na, na, array.new<Leg>(), frames, na, na, false, "", na)
-    e.ma := f_maNew()
+    e.ma := MaState.new()
     e
 
 f_stop(Root e, string why) =>
@@ -481,7 +417,7 @@ f_jsonNumber(float value) =>
     string result = na(value) ? "null" : str.tostring(value, "#.########")
     result
 
-// 0=缺项，1=减弱参考，-1=增强反证，2=持平/分歧；实零参与比较，不用比率判零基准。
+// 0缺项 1减弱 -1增强 2持平/分歧；实零参与比较。
 f_compare(float current, float previous) =>
     int result = na(current) or na(previous) ? 0 : current < previous ? 1 : current > previous ? -1 : 2
     result
@@ -531,7 +467,6 @@ f_sigCaption(Signal s) =>
     string result = str.tostring(s.category) + (s.candidate ? "?" : "") + (s.dir > 0 ? "买" : "卖") + "·S" + str.tostring(s.level)
     result
 
-// 对前同向段的比值：×<1减弱、×>1增强；完整数值与冻结端点在JSON。
 f_strengthLine(Frame frame) =>
     Strength s = frame.currentStrength
     Strength p = frame.previousStrength
@@ -577,7 +512,7 @@ f_emit(Frame frame, int category, int dir, bool candidate, int occurred, int con
                 lv.lastSell2 := s
     s
 
-// 原K闭区间裁切；包含K或缓存极值可能跨界，不能替代。
+// 原K闭区间裁切；不能用包含K或缓存极值代替。
 f_rawIndex(Root e, int t) =>
     int lo = 0
     int hi = array.size(e.raw)
@@ -618,8 +553,8 @@ f_range(Root e, int at, float a, int bt, float b) =>
         j += 1
     [h, l, ht, lt]
 
-// 累计量用(at,bt]，共享端点只归前段；各项缺值独立传播，不以0伪造未知。
-// 每层相邻确认段不重叠：各原K每层只统计一次，不重复扫描历史同向段。
+// 累计(at,bt]，共享端点归前段；缺值独立传播，不以0伪造。
+// 相邻确认段不重叠，同层每根原K只计一次。
 f_strength(Root e, Leg p) =>
     int first = f_rawIndex(e, p.at)
     int last = f_rawIndex(e, p.bt)
@@ -751,7 +686,7 @@ f_followCandidate(Frame frame, int confirmed) =>
                         if stage == 0 and q.dir == parent.dir
                             stage := 1
                         else if stage == 1 and q.dir == -parent.dir
-                            f_emit(frame, 2, parent.dir, true, parent.dir > 0 ? q.lt : q.ht, confirmed, parent.dir > 0 ? q.l : q.h, "标准1?→2?路径：完整反向反弹/回落后首次完整回试结束；继承父候选不确定性，第101课不要求不破1买/1卖。仅结构候选。")
+                            f_emit(frame, 2, parent.dir, true, parent.dir > 0 ? q.lt : q.ht, confirmed, parent.dir > 0 ? q.l : q.h, "标准1?→2?路径：完整反向反弹/回落后首次完整回试结束；继承父候选不确定性，第101课不要求不破1买/1卖。")
                             if side == 0
                                 lv.buy1 := na
                             else
@@ -823,7 +758,7 @@ f_levelPart(Root e, Frame frame, Leg p, int confirmed) =>
             bool newExtreme = not na(oldExtreme) and (p.dir > 0 ? p.h > oldExtreme : p.l < oldExtreme)
             if outside and newExtreme and p.dir == lv.trend
                 int side = -p.dir
-                Signal premise = f_emit(frame, 1, side, true, side > 0 ? p.lt : p.ht, confirmed, side > 0 ? p.l : p.h, "至少两个同级GG/DD独立同向中枢；末中枢后完整段创新极值，极点已由反向特征序列确认。只证背驰形态前提，不证力度，不是严格1类。\n仅纯结构候选，未获得严格力度证据。")
+                Signal premise = f_emit(frame, 1, side, true, side > 0 ? p.lt : p.ht, confirmed, side > 0 ? p.l : p.h, "至少两个同级GG/DD独立同向中枢；末中枢后完整段创新极值，极点已由反向特征序列确认。只证背驰形态前提，不证力度，不是严格1类。")
                 if side > 0
                     lv.buy1 := premise
                     lv.smallBuy := premise
@@ -866,6 +801,11 @@ f_levelPart(Root e, Frame frame, Leg p, int confirmed) =>
 f_endpointValid(SegmentBuilder s, int endpoint, float price, int pivotTime) =>
     endpoint - s.start >= 3 and pivotTime > s.anchorTime and (s.dir > 0 ? price > s.anchorPrice : price < s.anchorPrice)
 
+f_zone(Leg a, Leg b, Leg c) =>
+    float lo = math.max(math.min(a.a, a.b), math.max(math.min(b.a, b.b), math.min(c.a, c.b)))
+    float hi = math.min(math.max(a.a, a.b), math.min(math.max(b.a, b.b), math.max(c.a, c.b)))
+    [lo, hi]
+
 f_segmentConfirm(Root e, Frame frame, array<Leg> lower, int endpoint, float pivotPrice, int pivotTime, int confirmed) =>
     SegmentBuilder s = frame.builder
     bool valid = f_endpointValid(s, endpoint, pivotPrice, pivotTime)
@@ -877,8 +817,7 @@ f_segmentConfirm(Root e, Frame frame, array<Leg> lower, int endpoint, float pivo
             Leg nextFirst = array.get(lower, endpoint)
             Leg nextSecond = array.get(lower, endpoint + 1)
             Leg nextThird = array.get(lower, endpoint + 2)
-            float lo = math.max(math.min(nextFirst.a, nextFirst.b), math.max(math.min(nextSecond.a, nextSecond.b), math.min(nextThird.a, nextThird.b)))
-            float hi = math.min(math.max(nextFirst.a, nextFirst.b), math.min(math.max(nextSecond.a, nextSecond.b), math.max(nextThird.a, nextThird.b)))
+            [lo, hi] = f_zone(nextFirst, nextSecond, nextThird)
             bool shared = nextFirst.a == pivotPrice and nextFirst.at == pivotTime
             bool connected = nextSecond.a == nextFirst.b and nextSecond.at == nextFirst.bt and nextThird.a == nextSecond.b and nextThird.at == nextSecond.bt
             if not shared or not connected or lo > hi or nextFirst.dir != -s.dir or nextThird.dir != nextFirst.dir or nextSecond.dir != -nextFirst.dir
@@ -934,8 +873,7 @@ f_segments(Root e, Frame frame, array<Leg> lower, int confirmed) =>
                     s.anchorTime := a.at
                 Leg b = array.get(lower, s.start + 1)
                 Leg c = array.get(lower, s.start + 2)
-                float lo = math.max(math.min(a.a, a.b), math.max(math.min(b.a, b.b), math.min(c.a, c.b)))
-                float hi = math.min(math.max(a.a, a.b), math.min(math.max(b.a, b.b), math.max(c.a, c.b)))
+                [lo, hi] = f_zone(a, b, c)
                 if lo <= hi and a.dir == c.dir and a.dir == -b.dir
                     s.dir := a.dir
                     s.next := s.start
@@ -970,8 +908,7 @@ f_segments(Root e, Frame frame, array<Leg> lower, int confirmed) =>
                         Leg a = array.get(lower, s.strong)
                         Leg b = array.get(lower, s.strong + 1)
                         Leg c = array.get(lower, s.strong + 2)
-                        float lo = math.max(math.min(a.a, a.b), math.max(math.min(b.a, b.b), math.min(c.a, c.b)))
-                        float hi = math.min(math.max(a.a, a.b), math.min(math.max(b.a, b.b), math.max(c.a, c.b)))
+                        [lo, hi] = f_zone(a, b, c)
                         strongComplete := lo <= hi and a.dir == c.dir and a.dir == -b.dir and p.dir == a.dir and (s.dir > 0 ? p.b < a.b : p.b > a.b)
                     if strongComplete
                         f_segmentConfirm(e, frame, lower, s.proposed, s.proposedPrice, s.proposedTime, confirmed)
@@ -1103,29 +1040,25 @@ f_closeEvents(Frame frame, float priorClose, float closePrice, int occurred, int
     0
 
 f_ingest(Root e, int t, int tc, float h, float l) =>
-    if not e.halted and not na(t) and (na(e.lastTime) or t > e.lastTime)
-        if array.size(e.raw) >= barBudget
-            f_stop(e, "本图已确认原K预算耗尽；停止全链，保留既有确认状态")
-        else
-            e.lastTime := t
-            f_maStep(e.ma, t, maFast, maSlow, lipFraction)
-            array.push(e.raw, RawBar.new(t, h, l, macdHist, macdDif, macdDea, volume, maFast - maSlow, e.ma.kiss + (e.ma.kissing ? "·吻中" : "·分离")))
-            K item = K.new(h, l, t, t)
-            if e.inclusionDir == 0
-                int n = array.size(e.initial)
-                if n > 0
-                    K prior = array.get(e.initial, n - 1)
-                    if not f_contains(prior.h, prior.l, h, l)
-                        e.inclusionDir := h > prior.h ? 1 : -1
-                if f_room(e, n, "初始无方向K线缓冲")
-                    array.push(e.initial, item)
-                if e.inclusionDir != 0
-                    for j = 0 to array.size(e.initial) - 1
-                        if not e.halted
-                            f_normalized(e, array.get(e.initial, j), tc)
-                    array.clear(e.initial)
-            else
-                f_normalized(e, item, tc)
+    e.lastTime := t
+    f_maStep(e.ma, t, maFast, maSlow)
+    array.push(e.raw, RawBar.new(t, h, l, macdHist, macdDif, macdDea, volume, maFast - maSlow, e.ma.kiss + (e.ma.kissing ? "·吻中" : "·分离")))
+    K item = K.new(h, l, t, t)
+    if e.inclusionDir == 0
+        int n = array.size(e.initial)
+        if n > 0
+            K prior = array.get(e.initial, n - 1)
+            if not f_contains(prior.h, prior.l, h, l)
+                e.inclusionDir := h > prior.h ? 1 : -1
+        if f_room(e, n, "初始无方向K线缓冲")
+            array.push(e.initial, item)
+        if e.inclusionDir != 0
+            for j = 0 to array.size(e.initial) - 1
+                if not e.halted
+                    f_normalized(e, array.get(e.initial, j), tc)
+            array.clear(e.initial)
+    else
+        f_normalized(e, item, tc)
     0
 
 f_consume(Root e, int t, int tc, float h, float l, float c) =>
@@ -1216,7 +1149,7 @@ f_candleHints(Root e) =>
                     rank := math.max(rank, f_hintRank(s))
                     events += "\n\n" + f_sigCaption(s) + "\n" + s.auxTip
             if count > 0
-                // 真实当前K高低价 + 相对K线位置；不绘辅助数值、不引入成交量坐标。
+                // 锚在当前K高/低价。
                 string glyph = rank == 0 ? "●" : rank == 1 ? "○" : rank == 2 ? "?" : "!"
                 color ink = rank == 0 ? (direction > 0 ? buyColor : sellColor) : rank == 3 ? warnColor : MUTED_INK
                 string tip = (direction > 0 ? "买向" : "卖向") + " · " + str.tostring(count) + "个结构事件 · 确认K " + f_time(time_close) + "\n辅助（同向取最差）：" + f_rankWord(rank) + "\n" + summary + events + "\n\n辅助只标在确认K，不回标发生时，不升级候选。"
@@ -1321,7 +1254,6 @@ if barstate.isconfirmed and array.size(fresh) > 0
                     confluenceBuy := confluenceBuy or s.dir > 0
                     confluenceSell := confluenceSell or s.dir < 0
                     array.push(messages, f_payload(s, s.candidate ? "candidate_confluence" : "confluence", count, "[" + matched + "]"))
-// 每次收盘一个JSON，包含全部事件。
 if barstate.isconfirmed and array.size(messages) > 0
     alert("{\"events\":[" + array.join(messages, ",") + "]}", alert.freq_once_per_bar_close)
 
@@ -1334,7 +1266,7 @@ alertcondition(exited, "确认收盘离开既有中枢", "{{ticker}} 本图确�
 alertcondition(confluenceBuy, "买向结构层合取", "{{ticker}} 同类别买向事件达到不同结构层合取阈值。")
 alertcondition(confluenceSell, "卖向结构层合取", "{{ticker}} 同类别卖向事件达到不同结构层合取阈值。")
 
-// 盘中：每个实时tick只读最新确认中枢与前一确认收盘，不写状态；中枢仍是滞后的确认结构。
+// 盘中：每个tick只读最新确认中枢与前收，不写状态。
 bool intraExitUp = false
 bool intraExitDown = false
 bool intraEnter = false
@@ -1344,7 +1276,7 @@ if alertIntrabar
         for j = 0 to activeLevels - 1
             Frame frame = array.get(root.frames, j)
             Center c = frame.structure.active
-            // 当根确认新形成的中枢不参与盘中判定，与收盘进出的 formed < confirmed 一致。
+            // 当根新形成的中枢不参与，同收盘进出。
             if f_levelAllowed(frame.id) and not na(c) and c.formed < time_close
                 bool intraPriorInside = intraPriorClose >= c.zd and intraPriorClose <= c.zg
                 bool intraNowInside = close >= c.zd and close <= c.zg
@@ -1355,7 +1287,6 @@ alertcondition(intraExitUp, "盘中离开既有中枢（上沿）", "{{ticker}} 
 alertcondition(intraExitDown, "盘中离开既有中枢（下沿）", "{{ticker}} 盘中现价离开最新确认中枢下沿；未收盘，可能回撤。")
 alertcondition(intraEnter, "盘中回到既有中枢内", "{{ticker}} 盘中现价回到最新确认中枢内；未收盘，可能回撤。")
 
-// 无MA/MACD/VOL数值曲线、量轴或辅助面板；全部辅助信息收在确认K悬浮提示。
 var table panel = table.new(position.top_right, 1, 1, bgcolor = color.new(chart.bg_color, 10))
 if barstate.islast
     f_pending(root, time, close)

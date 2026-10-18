@@ -3,9 +3,8 @@ import assert from 'node:assert/strict';
 import { execute } from './support/pine-runtime.mjs';
 import { segmentEndpointFixture } from './support/structure-fixture.mjs';
 
-// Fixture bars have close = high = low, so PineTS only exercises the bar-close path.
-// Intraday tick behaviour cannot be emulated here; these tests pin the transition rule.
-const endpoints = [0,20,8,30,18,41,28,52,37,50,35,49,36,51,34,53,40,75,58,88,65,94,76,92,72,90,74,93,70,89,81,112,95,123,99,119,96,117,97,121,98,127,108,141,119,145,121,140,120,143,116,148];
+// 夹具 close=high=low，只覆盖收盘路径；盘中 tick 不模拟。
+const endpoints = [0, 20, 8, 30, 18, 41, 28, 52, 37, 50, 35, 49, 36, 51, 34, 53, 40, 75, 58, 88, 65, 94, 76, 92, 72, 90, 74, 93, 70, 89, 81, 112, 95, 123, 99, 119, 96, 117, 97, 121, 98, 127, 108, 141, 119, 145, 121, 140, 120, 143, 116, 148];
 const data = segmentEndpointFixture(endpoints);
 const EXIT_UP = '盘中离开既有中枢（上沿）';
 const EXIT_DOWN = '盘中离开既有中枢（下沿）';
